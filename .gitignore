@@ -1,4 +1,4 @@
-./agents
+.agents
 .env
 BDSF_AFL_Dev_Implementation_Guide.md
 timeline.pdf
