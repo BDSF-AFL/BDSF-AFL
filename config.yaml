@@ -1,0 +1,52 @@
+# BDSF-AFL Full Configuration
+
+# System
+N_clients: 20
+total_rounds: 500
+eval_every: 10
+log_dir: "logs/"
+device: "cpu"
+
+# Dataset
+dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST
+dirichlet_alpha: 0.1     # 0.1=heterogeneous | 0.5=moderate | .inf=IID
+batch_size: 32
+
+# Client training
+local_epochs: 5
+local_lr: 0.01
+T_base: 1.0              # base compute time (seconds; simulated)
+lognormal_mu: 0.5
+lognormal_sigma: 1.0
+fedprox_mu: 0.0          # 0.0 = disabled; 0.01 for FedProx baseline
+
+# Server aggregation
+eta: 0.01
+
+# Temporal filter (Pillar 1)
+K_base: 50
+lam: 0.3                 # lambda — volatility sensitivity
+kappa: 1.5               # Tukey fence multiplier; sweep {1.0, 1.5, 2.0, 2.5}
+use_tukey: true          # ablation: false = raw Q1/Q3
+fixed_K: false           # ablation: true = disable adaptive K_t
+
+# Spatial validator (Pillar 3)
+K_ref: 10
+M: 30
+theta_cos: 0.1
+gamma_clip: 1.5
+top_k_ref: true          # ablation: false = weighted mean reference
+adaptive_clip_enabled: true
+static_clip_C: 10.0      # used only when adaptive_clip_enabled: false
+
+# Reputation (Pillar 2)
+alpha_I: 0.4
+alpha_P: 0.2
+beta_I: 0.02
+beta_P: 0.05
+# Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
+
+# Attack simulation
+byz_fraction: 0.2        # 0.1 | 0.2 | 0.3; 0.5 for boundary test
+attack_type: "COMPOUND"  # T1_HIGH_FREQ | T2_STRAGGLER | S1_POISON |
+                         # S2_MIMICRY | ADAPTIVE | COMPOUND
