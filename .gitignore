@@ -1,6 +1,7 @@
 .agents
 .env
 BDSF_AFL_Dev_Implementation_Guide.md
+implementation_guide.md
 timeline.pdf
 timeline.md
 
@@ -12,3 +13,6 @@ tests/
 
 BDSF_AFL_Final_Report.pdf
 work_summary.md
+
+plots/output/
+

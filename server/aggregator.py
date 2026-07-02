@@ -194,6 +194,7 @@ class AggregatorServer:
 
         # --- Step 11: Reputation recovery ---
         self.rep_manager.recover(cid)
+        self.rep_manager.log_round(self.round_number)
         I_i, P_i = self.rep_manager.get(cid)
 
         # --- Step 12: Increment counters and return ---
