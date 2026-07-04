@@ -257,6 +257,7 @@ class SimulationEnvironment:
                     )
                     accuracy_log.append(acc)
                     logger.log_metric(round=u, metric_name="test_accuracy", value=acc)
+                    print(f"Completed effective round {u // N}/{total_rounds} | Test Accuracy: {acc:.4f}", flush=True)
 
                     # Reputation snapshots — once per eval cycle (Bug 3 fix)
                     for cid in range(N):
