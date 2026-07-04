@@ -31,7 +31,7 @@ def main():
     config["local_epochs"] = 5  # Realistic training epochs per round
 
     # On Colab, uncomment the line below to save logs directly to Google Drive:
-    # config["log_dir"] = "/content/drive/MyDrive/BDSF_results/logs/"
+    config["log_dir"] = "/content/drive/MyDrive/BDSF_results/logs/"
 
     # Use GPU if available for faster training
     device = "cuda" if torch.cuda.is_available() else "cpu"
