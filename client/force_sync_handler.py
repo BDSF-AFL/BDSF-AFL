@@ -63,6 +63,7 @@ class ForceSyncHandler:
         client_state["W_local"] = W_new.clone()
         client_state["gradient_buffer"] = []
         client_state["last_reset_time"] = payload.timestamp
+        client_state["force_sync_applied"] = True
 
         self.logger.log_update(
             round=0,

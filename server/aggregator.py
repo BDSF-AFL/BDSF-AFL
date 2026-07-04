@@ -90,27 +90,228 @@ class AggregatorServer:
         # Step 15: Round number (incremented on each accepted update)
         self.round_number: int = 0
 
+        # Step 16: Baseline aggregation configs
+        self.aggregation = config.get("aggregation", "bdsf_afl")
+        self.sync = config.get("sync", False)
+        self.sync_accumulator = {}
+        self.grad_history = {cid: [] for cid in client_ids}
+
     # ------------------------------------------------------------------
     # Main entry point — the 12-step pipeline
     # ------------------------------------------------------------------
 
     def handle_update(self, submission: UpdateSubmission) -> dict:
-        """Process a single client update through the full BDSF-AFL
-        decision pipeline.
-
-        Returns a response dict with keys: ``status``, ``reason``,
-        ``force_sync``, ``round``, ``I_i``, ``P_i``.
-        """
-
-        # --- Step 1: Compute behavioral gap g_i ---
+        """Process a single client update through the selected aggregation pipeline."""
         cid = submission.client_id
         reg = self.registry[cid]
         t_now = submission.t_submit
         g_i = t_now - reg.last_update_time
-
-        # --- Step 2: Get current reputation scores ---
         I_i, P_i = self.rep_manager.get(cid)
 
+        if self.aggregation in ("fedavg", "fedprox"):
+            if self.sync:
+                # Synchronous aggregation
+                self.sync_accumulator[cid] = submission.delta_W.clone()
+                
+                if len(self.sync_accumulator) == len(self.client_ids):
+                    reg.last_update_time = t_now
+                    avg_delta = torch.stack(list(self.sync_accumulator.values())).mean(dim=0)
+                    self.W_global = self.W_global + self.config.get("eta", 0.01) * avg_delta
+                    self.sync_accumulator.clear()
+                    
+                    self.logger.log_update(
+                        round=self.round_number, client_id=cid,
+                        g_i=g_i, I_i=I_i, P_i=P_i,
+                        status="ACCEPT", reason="SYNC_ACCUMULATE",
+                    )
+                    ret_val = {
+                        "status": "ACCEPT",
+                        "reason": "SYNC_ACCUMULATE",
+                        "force_sync": None,
+                        "round": self.round_number,
+                        "I_i": I_i,
+                        "P_i": P_i,
+                    }
+                    self.update_counter += 1
+                    self.round_number += 1
+                    return ret_val
+                else:
+                    reg.last_update_time = t_now
+                    self.logger.log_update(
+                        round=self.round_number, client_id=cid,
+                        g_i=g_i, I_i=I_i, P_i=P_i,
+                        status="ACCEPT", reason="SYNC_ACCUMULATE",
+                    )
+                    return {
+                        "status": "ACCEPT",
+                        "reason": "SYNC_ACCUMULATE",
+                        "force_sync": None,
+                        "round": self.round_number,
+                        "I_i": I_i,
+                        "P_i": P_i,
+                    }
+            else:
+                # Asynchronous FedAvg
+                reg.last_update_time = t_now
+                self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="ACCEPT", reason="ASYNC_FEDAVG",
+                )
+                ret_val = {
+                    "status": "ACCEPT",
+                    "reason": "ASYNC_FEDAVG",
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+                self.update_counter += 1
+                self.round_number += 1
+                return ret_val
+
+        elif self.aggregation == "afl_unconstrained":
+            reg.last_update_time = t_now
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="ACCEPT", reason="UNCONSTRAINED_AFL",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "UNCONSTRAINED_AFL",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        elif self.aggregation == "static_delay_afl":
+            tau_max = self.config.get("static_tau_max", 5.0)
+            s_i = t_now - submission.tau
+            if s_i > tau_max:
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="REJECT", reason="STATIC_DELAY_EXCEEDED",
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": "STATIC_DELAY_EXCEEDED",
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+            reg.last_update_time = t_now
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="ACCEPT", reason="STATIC_DELAY_AFL",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "STATIC_DELAY_AFL",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        elif self.aggregation == "pure_cosine":
+            passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
+            if not passes_cosine:
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="REJECT", reason="SPATIAL_COSINE",
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": "SPATIAL_COSINE",
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+            reg.last_update_time = t_now
+            delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * delta_W_clipped
+            entry = AcceptedEntry(
+                delta_W=delta_W_clipped.clone(),
+                I_score=1.0,
+                P_score=1.0,
+            )
+            self.accepted_buffer.append(entry)
+            self.spatial_validator.on_accept(entry)
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=1.0, P_i=1.0,
+                status="ACCEPT", reason="PURE_COSINE",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "PURE_COSINE",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": 1.0,
+                "P_i": 1.0,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        elif self.aggregation == "foolsgold":
+            self.grad_history[cid].append(submission.delta_W.clone())
+            summed_hist = {}
+            for c_id in self.client_ids:
+                if self.grad_history[c_id]:
+                    summed_hist[c_id] = torch.stack(self.grad_history[c_id]).sum(dim=0)
+                else:
+                    summed_hist[c_id] = torch.zeros_like(submission.delta_W)
+            v_i = summed_hist[cid]
+            norm_i = torch.norm(v_i).item()
+            contrib_sim = 0.0
+            if norm_i > 1e-9:
+                for other_id in self.client_ids:
+                    if other_id == cid:
+                        continue
+                    v_j = summed_hist[other_id]
+                    norm_j = torch.norm(v_j).item()
+                    if norm_j > 1e-9:
+                        sim = torch.dot(v_i, v_j).item() / (norm_i * norm_j)
+                        contrib_sim = max(contrib_sim, sim)
+            multiplier = max(0.0, min(1.0, 1.0 - contrib_sim))
+            reg.last_update_time = t_now
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * multiplier * submission.delta_W
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=multiplier, P_i=1.0,
+                status="ACCEPT", reason="FOOLSGOLD",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "FOOLSGOLD",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": multiplier,
+                "P_i": 1.0,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        # --- BDSF-AFL Proposed Pipeline (Step 1-12) ---
+        # --- Step 1: Compute behavioral gap g_i ---
         # --- Step 3: Run temporal gate ---
         temporal_result = self.temporal_filter.evaluate(g_i)
 
@@ -153,9 +354,6 @@ class AggregatorServer:
                 "P_i": P_i,
             }
 
-        # --- Step 6: Temporal PASS — update last_update_time ---
-        reg.last_update_time = t_now
-
         # --- Step 7: Spatial cosine check ---
         passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
         if not passes_cosine:
@@ -194,18 +392,16 @@ class AggregatorServer:
 
         # --- Step 11: Reputation recovery ---
         self.rep_manager.recover(cid)
-        self.rep_manager.log_round(self.round_number)
         I_i, P_i = self.rep_manager.get(cid)
 
-        # --- Step 12: Increment counters and return ---
-        self.update_counter += 1
-        self.round_number += 1
+        # --- Step 12: Log and return under current round, then increment ---
+        reg.last_update_time = t_now
         self.logger.log_update(
             round=self.round_number, client_id=cid,
             g_i=g_i, I_i=I_i, P_i=P_i,
             status="ACCEPT", reason="FULL_ACCEPT",
         )
-        return {
+        ret_val = {
             "status": "ACCEPT",
             "reason": "FULL_ACCEPT",
             "force_sync": None,
@@ -213,6 +409,9 @@ class AggregatorServer:
             "I_i": I_i,
             "P_i": P_i,
         }
+        self.update_counter += 1
+        self.round_number += 1
+        return ret_val
 
     # ------------------------------------------------------------------
     # Auxiliary public methods

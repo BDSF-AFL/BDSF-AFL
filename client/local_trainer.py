@@ -28,8 +28,14 @@ class LocalTrainer:
                 ce_loss = self.criterion(outputs, labels)
                 
                 if self.fedprox_mu > 0:
-                    W_current = self._get_flat_weights().to(self.device)
-                    prox_term = (self.fedprox_mu / 2.0) * torch.norm(W_current - W_ref) ** 2
+                    prox_term = 0.0
+                    offset = 0
+                    for param in self.model.parameters():
+                        numel = param.numel()
+                        ref_param = W_ref[offset:offset + numel].reshape(param.shape)
+                        prox_term += torch.norm(param - ref_param) ** 2
+                        offset += numel
+                    prox_term = (self.fedprox_mu / 2.0) * prox_term
                     loss = ce_loss + prox_term
                 else:
                     loss = ce_loss

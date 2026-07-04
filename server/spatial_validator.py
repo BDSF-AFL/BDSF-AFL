@@ -134,6 +134,7 @@ class SpatialValidator:
             grads = torch.stack(
                 [e.delta_W.flatten().float() for e in self._buffer]
             )
+            weights = weights.to(grads.device)
             ref = (weights.unsqueeze(1) * grads).sum(dim=0) / weight_sum
 
         return ref

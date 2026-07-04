@@ -21,11 +21,17 @@ class ClientNode:
         self._T_base = config.get("T_base", 1.0)
 
     async def run_one_round(self) -> dict:
-        # 1. Pull global weights
-        tau = time.time()
-        W_global = self.server.get_global_weights()
-        self.server.update_pull_time(self.client_id, tau)
-        self._state["W_local"] = W_global.clone()
+        # 1. Pull global weights or use force-synced weights
+        if self._state.get("force_sync_applied", False):
+            W_global = self._state["W_local"].clone()
+            tau = self._state.get("last_reset_time", time.time())
+            self.server.update_pull_time(self.client_id, tau)
+            self._state["force_sync_applied"] = False
+        else:
+            tau = time.time()
+            W_global = self.server.get_global_weights()
+            self.server.update_pull_time(self.client_id, tau)
+            self._state["W_local"] = W_global.clone()
 
         # 2. Simulate compute delay
         await self._simulate_delay()
@@ -49,15 +55,6 @@ class ClientNode:
         if response.get("force_sync") is not None:
             self.fs_handler.verify_and_apply(response["force_sync"], self._state)
 
-        # 7. Log
-        self.logger.log_update(
-            round=response["round"], 
-            client_id=self.client_id,
-            status=response["status"], 
-            reason=response["reason"],
-            I_i=response["I_i"], 
-            P_i=response["P_i"]
-        )
         return response
 
     async def _simulate_delay(self) -> None:

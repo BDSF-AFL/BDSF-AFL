@@ -79,11 +79,17 @@ class AttackInjectorWrapper:
         self.last_update_time = time.time()  # Track locally to compute honest_g_i
 
     async def run_one_round(self) -> dict:
-        # 1. Pull global weights
-        tau = time.time()
-        W_global = self.server.get_global_weights()
-        self.server.update_pull_time(self.client.client_id, tau)
-        self.client._state["W_local"] = W_global.clone()
+        # 1. Pull global weights or use force-synced weights
+        if self.client._state.get("force_sync_applied", False):
+            W_global = self.client._state["W_local"].clone()
+            tau = self.client._state.get("last_reset_time", time.time())
+            self.server.update_pull_time(self.client.client_id, tau)
+            self.client._state["force_sync_applied"] = False
+        else:
+            tau = time.time()
+            W_global = self.server.get_global_weights()
+            self.server.update_pull_time(self.client.client_id, tau)
+            self.client._state["W_local"] = W_global.clone()
 
         # 2. Simulate compute delay
         await self.client._simulate_delay()
@@ -141,15 +147,6 @@ class AttackInjectorWrapper:
         if response.get("reason") not in ("TEMPORAL_HIGH_FREQ", "TEMPORAL_STRAGGLER"):
             self.last_update_time = t_submit_modified
 
-        # 8. Log
-        self.client.logger.log_update(
-            round=response["round"], 
-            client_id=self.client.client_id,
-            status=response["status"], 
-            reason=response["reason"],
-            I_i=response["I_i"], 
-            P_i=response["P_i"]
-        )
         return response
 
 class SimulationEnvironment:
@@ -180,6 +177,8 @@ class SimulationEnvironment:
         
         # 5. Designate Byzantine clients
         byz_fraction = self.config.get("byz_fraction", 0.2)
+        if self.attack_type == "NONE":
+            byz_fraction = 0.0
         byz_count = int(N * byz_fraction)
         byz_ids = set(range(byz_count))
         honest_ids = set(range(byz_count, N))
@@ -204,35 +203,79 @@ class SimulationEnvironment:
             else:
                 clients.append(client_node)
                 
-        # 8. Run async training loop
+        # 8. True async training loop
+        #
+        # Fix (Critical — Audit Bug 1): The old implementation used
+        #   for r in range(total_rounds): await asyncio.gather(...)
+        # which is a hard synchronisation barrier — every client had to finish
+        # its round before the next could begin.  That is Synchronous FL, not AFL.
+        #
+        # Real AFL: each client runs as an independent continuous coroutine.
+        # The server processes updates as they arrive; fast clients are never
+        # blocked waiting for slow stragglers.
+        #
+        # Termination: total_updates = total_rounds * N accepted updates.
+        # This preserves the interface: total_rounds=5, N=10 → 50 accepted updates,
+        # identical to the old synchronous behaviour in terms of total work done.
+        #
+        # Evaluation (Fix — Audit Bug 3): rep_manager.log_round() is called here,
+        # once per eval cycle, NOT inside AggregatorServer.handle_update().
+        # That removes the O(N²) reputation history growth.
         accuracy_log = []
         total_rounds = self.config.get("total_rounds", 500)
-        eval_every = self.config.get("eval_every", 10)
-        device = self.config.get("device", "cpu")
-        
+        eval_every   = self.config.get("eval_every", 10)
+        device       = self.config.get("device", "cpu")
+
+        # Total accepted updates to process (re-interprets total_rounds as per-client rounds)
+        total_updates      = total_rounds * N
+        # Evaluate accuracy every eval_every "effective global rounds" worth of updates
+        eval_every_updates = eval_every * N
+
         # Initial accuracy
         init_acc = metrics.compute_accuracy(model, test_loader, server.get_global_weights(), device=device)
         accuracy_log.append(init_acc)
         logger.log_metric(round=0, metric_name="test_accuracy", value=init_acc)
-        
+
         async def run_loop():
-            for r in range(total_rounds):
-                # Run one concurrent round for all clients
-                await asyncio.gather(*[c.run_one_round() for c in clients])
-                
-                # Evaluation
-                if (r + 1) % eval_every == 0:
-                    acc = metrics.compute_accuracy(model, test_loader, server.get_global_weights(), device=device)
+            stop_event = asyncio.Event()
+
+            async def client_task(client):
+                """Independent per-client coroutine — runs until stop_event fires."""
+                while not stop_event.is_set():
+                    await client.run_one_round()
+
+            # Launch every client as an independent background task.
+            tasks = [asyncio.create_task(client_task(c)) for c in clients]
+
+            # Monitor accepted update count and trigger evaluation.
+            next_eval_at = eval_every_updates
+            while server.update_counter < total_updates:
+                if server.update_counter >= next_eval_at:
+                    u = server.update_counter   # snapshot for consistent logging
+                    acc = metrics.compute_accuracy(
+                        model, test_loader, server.get_global_weights(), device=device
+                    )
                     accuracy_log.append(acc)
-                    logger.log_metric(round=r + 1, metric_name="test_accuracy", value=acc)
-                    
-                    # Also log reputation snapshots
+                    logger.log_metric(round=u, metric_name="test_accuracy", value=acc)
+
+                    # Reputation snapshots — once per eval cycle (Bug 3 fix)
                     for cid in range(N):
                         I_val, P_val = server.rep_manager.get(cid)
                         is_byz = cid in byz_ids
-                        logger.log_reputation(round=r + 1, client_id=cid, I_i=I_val, P_i=P_val, is_byzantine=is_byz)
-        
-        # Run async loop
+                        logger.log_reputation(
+                            round=u, client_id=cid,
+                            I_i=I_val, P_i=P_val, is_byzantine=is_byz,
+                        )
+                    server.rep_manager.log_round(u)
+                    next_eval_at += eval_every_updates
+
+                await asyncio.sleep(0)  # yield to event loop so client tasks can run
+
+            # Signal all client tasks to stop after their current round completes.
+            stop_event.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Run the true-async loop
         asyncio.run(run_loop())
         
         # Return results
