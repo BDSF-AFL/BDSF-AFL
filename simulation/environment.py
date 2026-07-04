@@ -231,6 +231,8 @@ class SimulationEnvironment:
         # Evaluate accuracy every eval_every "effective global rounds" worth of updates
         eval_every_updates = eval_every * N
 
+        loop_start = time.time()
+
         # Initial accuracy
         init_acc = metrics.compute_accuracy(model, test_loader, server.get_global_weights(), device=device)
         accuracy_log.append(init_acc)
@@ -249,15 +251,39 @@ class SimulationEnvironment:
 
             # Monitor accepted update count and trigger evaluation.
             next_eval_at = eval_every_updates
+            last_progress_at = 0  # track last round we printed progress
             while server.update_counter < total_updates:
-                if server.update_counter >= next_eval_at:
+                u = server.update_counter  # snapshot
+                eff_round = u // N
+
+                # --- Lightweight per-round progress (every effective round) ---
+                if eff_round > last_progress_at or (u == 0 and last_progress_at == 0):
+                    last_progress_at = eff_round
+                    elapsed = time.time() - loop_start
+                    n_rejected = len(logger.get_rejection_log())
+                    pct = 100.0 * u / total_updates
+                    print(
+                        f"  Round {eff_round:>3}/{total_rounds} "
+                        f"| updates={u:>5}/{total_updates} ({pct:5.1f}%) "
+                        f"| rejected={n_rejected:>4} "
+                        f"| elapsed={elapsed:6.1f}s",
+                        flush=True,
+                    )
+
+                if u >= next_eval_at:
                     u = server.update_counter   # snapshot for consistent logging
                     acc = metrics.compute_accuracy(
                         model, test_loader, server.get_global_weights(), device=device
                     )
                     accuracy_log.append(acc)
                     logger.log_metric(round=u, metric_name="test_accuracy", value=acc)
-                    print(f"Completed effective round {u // N}/{total_rounds} | Test Accuracy: {acc:.4f}", flush=True)
+                    elapsed = time.time() - loop_start
+                    print(
+                        f">>> Eval @ round {u // N}/{total_rounds} "
+                        f"| Test Accuracy: {acc:.4f} "
+                        f"| elapsed={elapsed:.1f}s",
+                        flush=True,
+                    )
 
                     # Reputation snapshots — once per eval cycle (Bug 3 fix)
                     for cid in range(N):

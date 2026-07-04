@@ -30,8 +30,19 @@ def main():
     config["batch_size"] = 128  # Speed up loading and training on CPU
     config["local_epochs"] = 5  # Realistic training epochs per round
 
-    # On Colab, uncomment the line below to save logs directly to Google Drive:
-    config["log_dir"] = "/content/drive/MyDrive/BDSF_results/logs/"
+    # Auto-detect Google Drive (Colab) vs. local environment
+    DRIVE_LOG_DIR = "/content/drive/MyDrive/BDSF_results/logs/"
+    if os.path.isdir("/content/drive/MyDrive"):
+        log_dir = DRIVE_LOG_DIR
+        os.makedirs(log_dir, exist_ok=True)
+        print(f"[LOG] Google Drive mounted — writing logs to: {log_dir}")
+    else:
+        log_dir = "logs/"
+        print(f"[LOG] Google Drive not mounted — writing logs locally to: {log_dir}")
+    config["log_dir"] = log_dir
+
+    # Print more frequently (every 5 effective rounds)
+    config["eval_every"] = 5
 
     # Use GPU if available for faster training
     device = "cuda" if torch.cuda.is_available() else "cpu"
