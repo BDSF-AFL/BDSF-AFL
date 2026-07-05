@@ -13,8 +13,7 @@ class SpatialValidator:
     clipping against incoming gradients.
 
     Ablation flags:
-      - top_k_ref (True)  → Top-K reference by I*P score
-                  (False) → weighted mean of all buffer entries
+      - top_k_ref (True)  → Top-K reference by I*P score (always used)
       - adaptive_clip (True)  → C_t = median(norms) * gamma_clip
                      (False) → static clip from config["static_clip_C"]
     """
@@ -25,14 +24,16 @@ class SpatialValidator:
         self.theta_cos: float = config.get("theta_cos", 0.1)
         self.gamma_clip: float = config.get("gamma_clip", 1.5)
 
-        self.use_top_k_ref: bool = config.get("top_k_ref", True)
+        self.use_top_k_ref: bool = True
         self.use_adaptive_clip: bool = config.get("adaptive_clip_enabled", True)
-
         # Own buffer — AggregatorServer calls on_accept() to keep it in sync
         self._buffer: deque[AcceptedEntry] = deque(maxlen=self.M)
 
         # Keep config reference for static_clip_C fallback
         self.config: dict = config
+        
+        # Track the last computed cosine similarity for the borderline suspicion check
+        self.last_sim: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Buffer management
@@ -55,6 +56,7 @@ class SpatialValidator:
 
         # No reference yet — burn-in; accept everything
         if ref is None:
+            self.last_sim = None
             return True
 
         dW_flat = delta_W.flatten().float()
@@ -65,9 +67,11 @@ class SpatialValidator:
 
         # Zero gradient — don't reject
         if dW_norm < 1e-9 or ref_norm < 1e-9:
+            self.last_sim = None
             return True
 
         sim = torch.dot(dW_flat, ref_flat).item() / (dW_norm * ref_norm)
+        self.last_sim = sim
         return sim >= self.theta_cos
 
     # ------------------------------------------------------------------
@@ -104,37 +108,27 @@ class SpatialValidator:
     # ------------------------------------------------------------------
 
     def _build_reference(self) -> Optional[torch.Tensor]:
-        """Builds the Top-K trust-anchored reference vector from the accepted
-        gradient buffer. Returns None if the buffer is empty."""
+        """Builds the trust-anchored reference vector using Top-K reputation scores."""
 
-        if len(self._buffer) == 0:
+        if len(self._buffer) < self.K_ref:
             return None
 
-        if self.use_top_k_ref:
-            # Top-K by composite reputation score I*P (descending)
-            ranked = sorted(
-                self._buffer,
-                key=lambda e: e.I_score * e.P_score,
-                reverse=True,
-            )
-            top_k = ranked[: min(self.K_ref, len(ranked))]
-            ref = torch.stack(
-                [e.delta_W.flatten().float() for e in top_k]
-            ).mean(dim=0)
-        else:
-            # Ablation: weighted mean of all entries
-            weights = torch.tensor(
-                [e.I_score * e.P_score for e in self._buffer]
-            )
-            weight_sum = weights.sum().item()
-
-            if weight_sum < 1e-9:
-                return None
-
-            grads = torch.stack(
-                [e.delta_W.flatten().float() for e in self._buffer]
-            )
-            weights = weights.to(grads.device)
-            ref = (weights.unsqueeze(1) * grads).sum(dim=0) / weight_sum
+        # Top-K by composite reputation score I*P (descending)
+        ranked = sorted(
+            self._buffer,
+            key=lambda e: e.I_score * e.P_score,
+            reverse=True,
+        )
+        top_k = ranked[: min(self.K_ref, len(ranked))]
+        
+        normed_grads = []
+        for e in top_k:
+            g = e.delta_W.flatten().float()
+            gnorm = torch.norm(g).item()
+            if gnorm > 1e-9:
+                normed_grads.append(g / gnorm)
+            else:
+                normed_grads.append(g)
+        ref = torch.stack(normed_grads).mean(dim=0)
 
         return ref

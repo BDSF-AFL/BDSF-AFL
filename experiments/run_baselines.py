@@ -68,7 +68,7 @@ def run_bdsf_afl_base(config: dict, seed: int) -> dict:
     cfg = copy.deepcopy(config)
     cfg["use_tukey"] = False
     cfg["fixed_K"] = True
-    cfg["top_k_ref"] = False
+    cfg["top_k_ref"] = True
     cfg["beta_I"] = cfg.get("beta_P", 0.05)
     cfg["adaptive_clip_enabled"] = False
     

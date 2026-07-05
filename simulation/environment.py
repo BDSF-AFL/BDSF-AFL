@@ -76,27 +76,27 @@ class AttackInjectorWrapper:
         self.client = client
         self.injector = injector
         self.server = server
-        self.last_update_time = time.time()  # Track locally to compute honest_g_i
-
+        self.last_update_time = self.server.get_virtual_time()  # Track locally to compute honest_g_i
+ 
     async def run_one_round(self) -> dict:
         # 1. Pull global weights or use force-synced weights
         if self.client._state.get("force_sync_applied", False):
             W_global = self.client._state["W_local"].clone()
-            tau = self.client._state.get("last_reset_time", time.time())
+            tau = self.client._state.get("last_reset_time", self.server.get_virtual_time())
             self.server.update_pull_time(self.client.client_id, tau)
             self.client._state["force_sync_applied"] = False
         else:
-            tau = time.time()
+            tau = self.server.get_virtual_time()
             W_global = self.server.get_global_weights()
             self.server.update_pull_time(self.client.client_id, tau)
             self.client._state["W_local"] = W_global.clone()
-
+ 
         # 2. Simulate compute delay
         await self.client._simulate_delay()
-
+ 
         # 3. Train locally to get honest gradient
         honest_delta_W = self.client.trainer.train(W_global)
-        t_submit_honest = time.time()
+        t_submit_honest = self.server.get_virtual_time()
         
         # Calculate honest gap g_i
         honest_g_i = t_submit_honest - self.last_update_time
@@ -234,7 +234,10 @@ class SimulationEnvironment:
         loop_start = time.time()
 
         # Initial accuracy
+        t_start = time.time()
         init_acc = metrics.compute_accuracy(model, test_loader, server.get_global_weights(), device=device)
+        t_end = time.time()
+        server.accumulate_eval_time(t_end - t_start)
         accuracy_log.append(init_acc)
         logger.log_metric(round=0, metric_name="test_accuracy", value=init_acc)
 
@@ -243,24 +246,29 @@ class SimulationEnvironment:
 
             async def client_task(client):
                 """Independent per-client coroutine — runs until stop_event fires."""
+                # Startup jitter to scramble arrival order at the server
+                await asyncio.sleep(random.uniform(0.0, 0.1))
                 while not stop_event.is_set():
                     await client.run_one_round()
+                    await asyncio.sleep(0.01)  # Yield thread to allow other tasks' timers to resolve
 
-            # Launch every client as an independent background task.
-            tasks = [asyncio.create_task(client_task(c)) for c in clients]
+            # Launch every client as an independent background task in random order
+            shuffled_clients = list(clients)
+            random.shuffle(shuffled_clients)
+            tasks = [asyncio.create_task(client_task(c)) for c in shuffled_clients]
 
             # Monitor accepted update count and trigger evaluation.
             next_eval_at = eval_every_updates
-            last_progress_at = 0  # track last round we printed progress
+            last_progress_at = -1  # track last round we printed progress
             while server.update_counter < total_updates:
                 u = server.update_counter  # snapshot
                 eff_round = u // N
 
                 # --- Lightweight per-round progress (every effective round) ---
-                if eff_round > last_progress_at or (u == 0 and last_progress_at == 0):
+                if eff_round > last_progress_at:
                     last_progress_at = eff_round
                     elapsed = time.time() - loop_start
-                    n_rejected = len(logger.get_rejection_log())
+                    n_rejected = sum(1 for e in logger.get_rejection_log() if e.get("status") == "REJECT")
                     pct = 100.0 * u / total_updates
                     print(
                         f"  Round {eff_round:>3}/{total_rounds} "
@@ -272,9 +280,12 @@ class SimulationEnvironment:
 
                 if u >= next_eval_at:
                     u = server.update_counter   # snapshot for consistent logging
+                    t_start = time.time()
                     acc = metrics.compute_accuracy(
                         model, test_loader, server.get_global_weights(), device=device
                     )
+                    t_end = time.time()
+                    server.accumulate_eval_time(t_end - t_start)
                     accuracy_log.append(acc)
                     logger.log_metric(round=u, metric_name="test_accuracy", value=acc)
                     elapsed = time.time() - loop_start

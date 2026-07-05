@@ -3,6 +3,7 @@ import hashlib
 import os
 import time
 import io
+from typing import Optional
 import torch
 from shared.types import ForceSyncPayload
 
@@ -26,13 +27,15 @@ class ForceSyncDispatcher:
         client_id: int,
         W_global: torch.Tensor,
         session_key: bytes,
+        timestamp: Optional[float] = None,
     ) -> ForceSyncPayload:
         """Called by AggregatorServer when a straggler is detected.
 
         Returns a fully-signed ``ForceSyncPayload`` ready for dispatch.
         """
         weight_bytes = self._serialize_weights(W_global)
-        timestamp = time.time()
+        if timestamp is None:
+            timestamp = time.time()
         nonce = os.urandom(8)
 
         # HMAC message = weight_bytes || timestamp_str || nonce

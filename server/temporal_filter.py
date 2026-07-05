@@ -105,6 +105,13 @@ class TemporalFilter:
         Q3 = float(np.percentile(window, 75))
         IQR = Q3 - Q1
 
+        # Prevent scale collapse by enforcing a lower bound on the IQR.
+        # Since history contains only accepted gaps (conditional distribution),
+        # the variance mathematically contracts over time. We bound the IQR to
+        # be at least 5% of the median of the current window.
+        min_iqr = 0.05 * float(np.median(window))
+        IQR = max(IQR, min_iqr)
+
         if self.use_tukey:
             L = Q1 - self.kappa * IQR
             U = Q3 + self.kappa * IQR

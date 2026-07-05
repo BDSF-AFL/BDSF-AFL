@@ -36,6 +36,17 @@ class ReputationManager:
         self._history: dict[int, list[tuple]] = {cid: [] for cid in client_ids}
         self._round: int = 0
 
+        # Spatial Grace Counter parameters (default: 2)
+        self.spatial_grace_k: int = config.get("spatial_grace_k", 2)
+        # Borderline Suspicion Counter parameters (default: margin=0.10, limit=5)
+        self.borderline_margin: float = config.get("borderline_margin", 0.10)
+        self.borderline_limit: int = config.get("borderline_limit", 5)
+        self.theta_cos: float = config.get("theta_cos", 0.1)
+
+        # Initialize streaks
+        self.spatial_reject_streak: dict[int, int] = {cid: 0 for cid in client_ids}
+        self.borderline_streak: dict[int, int] = {cid: 0 for cid in client_ids}
+
     # ------------------------------------------------------------------
     # Slash methods
     # ------------------------------------------------------------------
@@ -51,6 +62,32 @@ class ReputationManager:
         Does NOT touch I_i."""
         self.scores[cid]["P"] *= (1.0 - self.alpha_P)
         self.scores[cid]["P"] = max(0.0, self.scores[cid]["P"])
+
+    def record_spatial_rejection(self, cid: int) -> None:
+        """Increments spatial reject streak. Applies integrity slash only if the streak
+        reaches or exceeds spatial_grace_k.
+        """
+        self.spatial_reject_streak[cid] += 1
+        if self.spatial_reject_streak[cid] >= self.spatial_grace_k:
+            self.slash_integrity(cid)
+
+    def record_accepted_update(self, cid: int) -> None:
+        """Resets the spatial reject streak to 0 upon a successfully accepted update.
+        """
+        self.spatial_reject_streak[cid] = 0
+
+    def record_borderline_check(self, cid: int, sim: Optional[float]) -> None:
+        """After an update passes the cosine gate: if theta_cos <= sim <= theta_cos + borderline_margin,
+        increment borderline_streak[cid]. Otherwise, reset borderline_streak[cid].
+        If borderline_streak[cid] >= borderline_limit, apply normal integrity slash and reset the streak.
+        """
+        if sim is not None and self.theta_cos <= sim <= (self.theta_cos + self.borderline_margin):
+            self.borderline_streak[cid] += 1
+            if self.borderline_streak[cid] >= self.borderline_limit:
+                self.slash_integrity(cid)
+                self.borderline_streak[cid] = 0
+        else:
+            self.borderline_streak[cid] = 0
 
     # ------------------------------------------------------------------
     # Recovery

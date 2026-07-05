@@ -71,6 +71,7 @@ class AggregatorServer:
 
         # Step 12: Instantiate force-sync dispatcher
         self.force_sync_dispatcher = ForceSyncDispatcher()
+        self.total_eval_time = 0.0
 
         # Step 13: Build client registry
         self.registry: dict[int, ClientRegistration] = {}
@@ -79,8 +80,8 @@ class AggregatorServer:
             self.registry[cid] = ClientRegistration(
                 client_id=cid,
                 session_key=session_key,
-                last_update_time=time.time(),
-                pull_time=time.time(),
+                last_update_time=self.get_virtual_time(),
+                pull_time=self.get_virtual_time(),
                 is_byzantine=False,
             )
 
@@ -230,6 +231,8 @@ class AggregatorServer:
         elif self.aggregation == "pure_cosine":
             passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
             if not passes_cosine:
+                # Fix: same cascade-prevention fix as in the bdsf_afl pipeline.
+                reg.last_update_time = t_now
                 self.logger.log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
@@ -317,8 +320,10 @@ class AggregatorServer:
 
         # --- Step 4: Handle REJECT_HIGH_FREQ ---
         if temporal_result == "REJECT_HIGH_FREQ":
-            self.rep_manager.slash_integrity(cid)
+            self.rep_manager.reduce_pace(cid)
             I_i, P_i = self.rep_manager.get(cid)
+            # Fix (Livelock): Do not reset last_update_time on high-frequency rejection.
+            # Letting the gap accumulate prevents the client from being trapped in a loop.
             self.logger.log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
@@ -338,8 +343,14 @@ class AggregatorServer:
             self.rep_manager.reduce_pace(cid)
             I_i, P_i = self.rep_manager.get(cid)
             fs_payload = self.force_sync_dispatcher.build_payload(
-                cid, self.W_global, reg.session_key,
+                cid, self.W_global, reg.session_key, self.get_virtual_time()
             )
+            # Fix: synchronise the server-side timeline with the force_sync
+            # timestamp we are about to send to the client.  Without this,
+            # every subsequent g_i is measured from the stale T_prev and
+            # always exceeds U, trapping the client in a permanent
+            # reject → force-sync → reject livelock.
+            reg.last_update_time = fs_payload.timestamp
             self.logger.log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
@@ -357,8 +368,15 @@ class AggregatorServer:
         # --- Step 7: Spatial cosine check ---
         passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
         if not passes_cosine:
-            self.rep_manager.slash_integrity(cid)
+            # Spatial Grace Counter: Increment streak and slash only if streak >= grace limit
+            self.rep_manager.record_spatial_rejection(cid)
             I_i, P_i = self.rep_manager.get(cid)
+            # Fix: advance last_update_time so the next submission's g_i is
+            # measured from t_now (≈ one training round) rather than from the
+            # previous accepted update.  Without this, repeated spatial
+            # rejections accumulate gap until g_i > U, cascading into the
+            # permanent TEMPORAL_STRAGGLER livelock.
+            reg.last_update_time = t_now
             self.logger.log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
@@ -391,7 +409,14 @@ class AggregatorServer:
         self.spatial_validator.on_accept(entry)
 
         # --- Step 11: Reputation recovery ---
+        # Borderline Suspicion Counter: Perform suspicion check on the exposed cosine similarity
+        sim = self.spatial_validator.last_sim
+        self.rep_manager.record_borderline_check(cid, sim)
+        # Spatial Grace Counter: Reset the rejection streak since update is fully accepted
+        self.rep_manager.record_accepted_update(cid)
+        # Perform normal recovery
         self.rep_manager.recover(cid)
+        # Retrieve final scores after checking borderline/grace conditions
         I_i, P_i = self.rep_manager.get(cid)
 
         # --- Step 12: Log and return under current round, then increment ---
@@ -436,3 +461,11 @@ class AggregatorServer:
     def update_pull_time(self, client_id: int, pull_time: float) -> None:
         """Called when a client pulls W_global. Stores the pull timestamp."""
         self.registry[client_id].pull_time = pull_time
+
+    def get_virtual_time(self) -> float:
+        """Returns the current virtual timeline time (excluding blocking evaluation periods)."""
+        return time.time() - self.total_eval_time
+
+    def accumulate_eval_time(self, duration: float) -> None:
+        """Accrues CPU execution time spent on blocking evaluations."""
+        self.total_eval_time += duration

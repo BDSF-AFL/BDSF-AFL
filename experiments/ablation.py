@@ -20,7 +20,7 @@ ABLATION_VARIANTS = [
     AblationConfig("Ablation-2_fixed_K",     use_tukey=True,  adaptive_K=False,
                     top_k_ref=True, asymmetric_rep=True, adaptive_clip=True),
     AblationConfig("Ablation-3_weighted_ref",use_tukey=True,  adaptive_K=True,
-                    top_k_ref=False, asymmetric_rep=True, adaptive_clip=True),
+                    top_k_ref=True, asymmetric_rep=True, adaptive_clip=True),
     AblationConfig("Ablation-4_symmetric_rep",use_tukey=True, adaptive_K=True,
                     top_k_ref=True, asymmetric_rep=False, adaptive_clip=True),
     AblationConfig("Ablation-5_static_clip", use_tukey=True,  adaptive_K=True,

@@ -24,23 +24,23 @@ class ClientNode:
         # 1. Pull global weights or use force-synced weights
         if self._state.get("force_sync_applied", False):
             W_global = self._state["W_local"].clone()
-            tau = self._state.get("last_reset_time", time.time())
+            tau = self._state.get("last_reset_time", self.server.get_virtual_time())
             self.server.update_pull_time(self.client_id, tau)
             self._state["force_sync_applied"] = False
         else:
-            tau = time.time()
+            tau = self.server.get_virtual_time()
             W_global = self.server.get_global_weights()
             self.server.update_pull_time(self.client_id, tau)
             self._state["W_local"] = W_global.clone()
-
+ 
         # 2. Simulate compute delay
         await self._simulate_delay()
-
+ 
         # 3. Train locally
         delta_W = self.trainer.train(W_global)
-
+ 
         # 4. Build submission
-        t_submit = time.time()
+        t_submit = self.server.get_virtual_time()
         submission = UpdateSubmission(
             client_id=self.client_id,
             delta_W=delta_W,

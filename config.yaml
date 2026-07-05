@@ -35,7 +35,7 @@ K_ref: 10
 M: 30
 theta_cos: 0.1
 gamma_clip: 1.5
-top_k_ref: true          # ablation: false = weighted mean reference
+top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true
 static_clip_C: 10.0      # used only when adaptive_clip_enabled: false
 
@@ -45,6 +45,9 @@ alpha_P: 0.2
 beta_I: 0.02
 beta_P: 0.05
 # Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
+spatial_grace_k: 2
+borderline_margin: 0.10
+borderline_limit: 5
 
 # Attack simulation
 byz_fraction: 0.2        # 0.1 | 0.2 | 0.3; 0.5 for boundary test
