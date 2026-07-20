@@ -3,6 +3,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: torch.Tensor, device: str = "cpu") -> float:
+    model = model.to(device)
     offset = 0
     with torch.no_grad():
         for param in model.parameters():
