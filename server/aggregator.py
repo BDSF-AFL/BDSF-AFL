@@ -107,6 +107,7 @@ class AggregatorServer:
         reg = self.registry[cid]
         t_now = submission.t_submit
         g_i = t_now - reg.last_update_time
+        s_i = submission.t_submit - submission.tau  # staleness (used for STRAGGLER check)
         I_i, P_i = self.rep_manager.get(cid)
 
         if self.aggregation in ("fedavg", "fedprox"):
@@ -316,7 +317,7 @@ class AggregatorServer:
         # --- BDSF-AFL Proposed Pipeline (Step 1-12) ---
         # --- Step 1: Compute behavioral gap g_i ---
         # --- Step 3: Run temporal gate ---
-        temporal_result = self.temporal_filter.evaluate(g_i)
+        temporal_result = self.temporal_filter.evaluate(g_i,s_i)
 
         # --- Step 4: Handle REJECT_HIGH_FREQ ---
         if temporal_result == "REJECT_HIGH_FREQ":
@@ -340,7 +341,7 @@ class AggregatorServer:
 
         # --- Step 5: Handle REJECT_STRAGGLER ---
         if temporal_result == "REJECT_STRAGGLER":
-            self.rep_manager.reduce_pace(cid)
+            self.rep_manager.record_temporal_rejection(cid)  # grace-aware slash
             I_i, P_i = self.rep_manager.get(cid)
             fs_payload = self.force_sync_dispatcher.build_payload(
                 cid, self.W_global, reg.session_key, self.get_virtual_time()

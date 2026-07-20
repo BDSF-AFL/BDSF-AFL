@@ -46,6 +46,7 @@ beta_I: 0.02
 beta_P: 0.05
 # Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
 spatial_grace_k: 2
+temporal_grace_k: 3    # straggler rejections allowed before P_i is slashed
 borderline_margin: 0.10
 borderline_limit: 5
 

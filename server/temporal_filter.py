@@ -25,7 +25,7 @@ class TemporalFilter:
     #  Public API                                                         #
     # ------------------------------------------------------------------ #
 
-    def evaluate(self, g_i: float) -> str:
+    def evaluate(self, g_i: float,s_i: float) -> str:
         """Primary public method.  Called by AggregatorServer on every
         incoming update.
 
@@ -46,11 +46,11 @@ class TemporalFilter:
         if L is None:
             self.gap_history.append(g_i)
             return "PASS"
-
+        # Spammer check uses behavioral gap (how frequently they submit)
         if g_i < L:
             return "REJECT_HIGH_FREQ"
-
-        if g_i > U:
+        # Straggler check uses staleness (how long THIS training round took)
+        if s_i > U:
             return "REJECT_STRAGGLER"
 
         # Within [L, U] — accept and record the gap.

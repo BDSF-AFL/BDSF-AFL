@@ -1,5 +1,4 @@
-from typing import Tuple
-
+from typing import Tuple, Optional
 
 class ReputationManager:
     """Maintains per-client Integrity Score I_i (spatial trust) and Pace Score P_i
@@ -38,6 +37,10 @@ class ReputationManager:
 
         # Spatial Grace Counter parameters (default: 2)
         self.spatial_grace_k: int = config.get("spatial_grace_k", 2)
+        # Temporal Grace Counter parameters (default: 3)
+        # A client must be a straggler consecutively for this many times before P_i is slashed.
+        self.temporal_grace_k: int = config.get("temporal_grace_k", 3)
+        self.temporal_reject_streak: dict[int, int] = {cid: 0 for cid in client_ids}
         # Borderline Suspicion Counter parameters (default: margin=0.10, limit=5)
         self.borderline_margin: float = config.get("borderline_margin", 0.10)
         self.borderline_limit: int = config.get("borderline_limit", 5)
@@ -72,10 +75,20 @@ class ReputationManager:
             self.slash_integrity(cid)
 
     def record_accepted_update(self, cid: int) -> None:
-        """Resets the spatial reject streak to 0 upon a successfully accepted update.
+        """Resets the spatial and temporal reject streaks upon a successfully accepted update.
         """
         self.spatial_reject_streak[cid] = 0
-
+        self.temporal_reject_streak[cid] = 0  # also reset temporal grace streak
+    
+    def record_temporal_rejection(self, cid: int) -> None:
+        """Increments temporal reject streak. Slashes P_i only if streak
+        reaches or exceeds temporal_grace_k. This prevents honest clients
+        from being penalized for a single transient network delay.
+        """
+        self.temporal_reject_streak[cid] += 1
+        if self.temporal_reject_streak[cid] >= self.temporal_grace_k:
+            self.reduce_pace(cid)
+            
     def record_borderline_check(self, cid: int, sim: Optional[float]) -> None:
         """After an update passes the cosine gate: if theta_cos <= sim <= theta_cos + borderline_margin,
         increment borderline_streak[cid]. Otherwise, reset borderline_streak[cid].
