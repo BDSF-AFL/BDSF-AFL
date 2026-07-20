@@ -6,12 +6,12 @@ from typing import Callable
 
 class LocalTrainer:
     def __init__(self, model: nn.Module, dataloader: DataLoader, config: dict):
-        self.model = model
+        self.device = config.get("device", "cpu")
+        self.model = model.to(self.device)
         self.dataloader = dataloader
         self.local_epochs = config.get("local_epochs", 5)
         self.local_lr = config.get("local_lr", 0.01)
         self.fedprox_mu = config.get("fedprox_mu", 0.0)
-        self.device = config.get("device", "cpu")
         self.criterion = nn.CrossEntropyLoss()
 
     def train(self, W_global: torch.Tensor) -> torch.Tensor:
