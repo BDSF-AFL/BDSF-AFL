@@ -1,9 +1,9 @@
 # BDSF-AFL Full Configuration
 
 # System
-N_clients: 15
-total_rounds: 75
-eval_every: 10
+N_clients: 10
+total_rounds: 25
+eval_every: 5
 log_dir: "logs/"
 device: "cuda"
 
