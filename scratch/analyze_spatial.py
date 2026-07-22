@@ -315,8 +315,11 @@ def main():
     
     base_config = load_config()
     
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    base_config["device"] = device
+    
     # 1. Setup base data partitions for stats
-    base_config["dataset"] = "MNIST"
+    # (Removed base_config["dataset"] = "MNIST" to strictly use config.yaml)
     partitioner = DataPartitioner(base_config)
     dataloaders = partitioner.partition()
     print_label_histograms(dataloaders, base_config.get("dataset", "MNIST"))
@@ -337,14 +340,11 @@ def main():
     print("SPATIAL ANALYSIS CONFIGURATIONS")
     print("=" * 80)
     display_config = copy.deepcopy(base_config)
-    # display_config.update({
-    #     "T_base": 0.0,
-    #     "batch_size": 128,
-    #     "local_epochs": 5,
-    #     "dataset": "MNIST",
-    #     "total_rounds": 15
-    # })
-    print(yaml.dump(display_config, default_flow_style=False).strip())
+    
+    important_keys = ["dataset", "num_clients", "total_rounds", "batch_size", "local_epochs", "learning_rate", "theta_cos", "spatial_grace_k", "device"]
+    important_config = {k: display_config[k] for k in important_keys if k in display_config}
+    
+    print(yaml.dump(important_config, default_flow_style=False).strip())
     print(f"Modes: {modes}")
     print(f"Attacks: {attacks}")
     print("=" * 80 + "\n")
@@ -361,12 +361,7 @@ def main():
             print("-" * 60)
             
             config = copy.deepcopy(base_config)
-            # config["T_base"] = 0.0
-            # config["batch_size"] = 128
-            # config["local_epochs"] = 5
-            # config["dataset"] = "MNIST"
-            # config["total_rounds"] = 15
-            # config["ref_mode"] = mode
+            config["ref_mode"] = mode
             
             if attack == "NONE":
                 config["byz_fraction"] = 0.0
