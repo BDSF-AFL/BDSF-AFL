@@ -179,8 +179,8 @@ def run_config_2():
     print("=============================================")
     
     config = load_base_config()
-    config["N_clients"] = 10
-    config["total_rounds"] = 25
+    # config["N_clients"] = 10
+    # config["total_rounds"] = 25
     config["T_base"] = 0.0  # Run instantly
     config["eval_every"] = 1
     # config["dataset"] = "MNIST"
