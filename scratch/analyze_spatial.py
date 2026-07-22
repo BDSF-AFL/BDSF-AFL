@@ -10,6 +10,14 @@ import asyncio
 import time
 from typing import List
 
+# TPU support via torch_xla (Kaggle TPU)
+try:
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+    XLA_AVAILABLE = True
+except ImportError:
+    XLA_AVAILABLE = False
+
 from simulation.data_partitioner import DataPartitioner
 from simulation.environment import SimulationEnvironment, _build_model
 from server.spatial_validator import SpatialValidator
@@ -317,8 +325,27 @@ def main():
     
     os.makedirs("logs", exist_ok=True)
     
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    base_config["device"] = device
+    # --- Device selection: TPU > CUDA > CPU ---
+    if XLA_AVAILABLE:
+        device = xm.xla_device()
+        device_str = "xla"  # used in config (string form)
+        print("\n" + "=" * 80)
+        print(f"DEVICE: TPU ({device})")
+        print("=" * 80)
+    elif torch.cuda.is_available():
+        device = "cuda"
+        device_str = "cuda"
+        print("\n" + "=" * 80)
+        print(f"DEVICE: CUDA ({torch.cuda.get_device_name(0)})")
+        print("=" * 80)
+    else:
+        device = "cpu"
+        device_str = "cpu"
+        print("\n" + "=" * 80)
+        print("DEVICE: CPU (no GPU/TPU detected)")
+        print("=" * 80)
+    
+    base_config["device"] = device_str
     
     # 1. Setup base data partitions for stats
     # (Removed base_config["dataset"] = "MNIST" to strictly use config.yaml)
