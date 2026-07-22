@@ -8,7 +8,7 @@ log_dir: "logs/"
 device: "cpu"
 
 # Dataset
-dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST
+dataset: "MNIST"       # MNIST | CIFAR10 | FEMNIST
 dirichlet_alpha: 0.1     # 0.1=heterogeneous | 0.5=moderate | .inf=IID
 batch_size: 32
 
