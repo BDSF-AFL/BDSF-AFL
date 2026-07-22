@@ -315,6 +315,8 @@ def main():
     
     base_config = load_config()
     
+    os.makedirs("logs", exist_ok=True)
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
     base_config["device"] = device
     
@@ -324,9 +326,13 @@ def main():
     dataloaders = partitioner.partition()
     print_label_histograms(dataloaders, base_config.get("dataset", "MNIST"))
     
+    dataset_name = base_config.get("dataset", "MNIST")
     for i, loader in enumerate(dataloaders):
         subset_indices = loader.dataset.indices
-        targets = loader.dataset.dataset.targets()
+        if dataset_name == "MNIST":
+            targets = loader.dataset.dataset.targets.numpy()
+        else:
+            targets = np.array(loader.dataset.dataset.targets)
         client_targets = [targets[idx] for idx in subset_indices]
         unique, counts = np.unique(client_targets, return_counts=True)
         skew = 100.0 * max(counts) / len(client_targets) if len(client_targets) > 0 else 0.0
