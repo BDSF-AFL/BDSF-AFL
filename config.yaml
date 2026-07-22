@@ -5,7 +5,7 @@ N_clients: 15
 total_rounds: 75
 eval_every: 10
 log_dir: "logs/"
-device: "cpu"
+device: "cuda"
 
 # Dataset
 dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST
