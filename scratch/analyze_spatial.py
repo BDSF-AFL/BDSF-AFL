@@ -326,7 +326,7 @@ def main():
     
     for i, loader in enumerate(dataloaders):
         subset_indices = loader.dataset.indices
-        targets = loader.dataset.dataset.targets.numpy()
+        targets = loader.dataset.dataset.targets()
         client_targets = [targets[idx] for idx in subset_indices]
         unique, counts = np.unique(client_targets, return_counts=True)
         skew = 100.0 * max(counts) / len(client_targets) if len(client_targets) > 0 else 0.0
