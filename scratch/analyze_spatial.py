@@ -345,17 +345,17 @@ def main():
             print("-" * 60)
             
             config = copy.deepcopy(base_config)
-            config["T_base"] = 0.0
-            config["batch_size"] = 128
-            config["local_epochs"] = 5
-            config["dataset"] = "MNIST"
-            config["total_rounds"] = 15
-            config["ref_mode"] = mode
+            # config["T_base"] = 0.0
+            # config["batch_size"] = 128
+            # config["local_epochs"] = 5
+            # config["dataset"] = "MNIST"
+            # config["total_rounds"] = 15
+            # config["ref_mode"] = mode
             
             if attack == "NONE":
                 config["byz_fraction"] = 0.0
-            else:
-                config["byz_fraction"] = 0.2
+            # else:
+            #     config["byz_fraction"] = 0.2
                 
             global_config = config
             
