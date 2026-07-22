@@ -128,8 +128,8 @@ def run_config_1():
     print("=============================================")
     
     config = load_base_config()
-    # config["N_clients"] = 2
-    # config["total_rounds"] = 2
+    config["N_clients"] = 10
+    config["total_rounds"] = 25
     # config["T_base"] = 0.0  # Run instantly
     # config["eval_every"] = 1
     # config["dataset"] = "MNIST"
@@ -180,7 +180,7 @@ def run_config_2():
     
     config = load_base_config()
     config["N_clients"] = 10
-    config["total_rounds"] = 5
+    config["total_rounds"] = 25
     config["T_base"] = 0.0  # Run instantly
     config["eval_every"] = 1
     # config["dataset"] = "MNIST"
@@ -227,7 +227,7 @@ def _run_attacks(attacks: list, label: str) -> None:
         print(f"\n--- Running Attack: {attack} ---")
         config = load_base_config()
         config["N_clients"] = 10
-        config["total_rounds"] = 5
+        config["total_rounds"] = 25
         config["T_base"] = 0.0
         config["eval_every"] = 1
         # config["dataset"] = "MNIST"
