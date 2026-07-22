@@ -333,6 +333,22 @@ def main():
     modes = ["topk"]
     attacks = ["NONE", "T1_HIGH_FREQ", "T2_STRAGGLER", "S1_POISON", "S2_MIMICRY", "ADAPTIVE", "COMPOUND"]
     
+    print("\n" + "=" * 80)
+    print("SPATIAL ANALYSIS CONFIGURATIONS")
+    print("=" * 80)
+    display_config = copy.deepcopy(base_config)
+    # display_config.update({
+    #     "T_base": 0.0,
+    #     "batch_size": 128,
+    #     "local_epochs": 5,
+    #     "dataset": "MNIST",
+    #     "total_rounds": 15
+    # })
+    print(yaml.dump(display_config, default_flow_style=False).strip())
+    print(f"Modes: {modes}")
+    print(f"Attacks: {attacks}")
+    print("=" * 80 + "\n")
+    
     ablation_results = {mode: {} for mode in modes}
     
     for attack in attacks:
