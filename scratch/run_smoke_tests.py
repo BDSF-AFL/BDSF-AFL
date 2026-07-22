@@ -106,8 +106,8 @@ def custom_env_run(self):
     global _progress_tracker, _active_server, client_completed_rounds
     _active_server = None
     client_completed_rounds.clear()
-    N = self.config.get("N_clients", 20)
-    total_rounds = self.config.get("total_rounds", 500)
+    N = self.config.get("N_clients", 10)
+    total_rounds = self.config.get("total_rounds", 25)
     _progress_tracker = ProgressTracker(N, total_rounds)
     
     print(f"[Simulation] Starting environment run on {self.config.get('device', 'cpu')}...", flush=True)
@@ -128,13 +128,13 @@ def run_config_1():
     print("=============================================")
     
     config = load_base_config()
-    config["N_clients"] = 2
-    config["total_rounds"] = 2
-    config["T_base"] = 0.0  # Run instantly
-    config["eval_every"] = 1
-    config["dataset"] = "MNIST"
-    config["batch_size"] = 128  # Speed up loading/training
-    config["local_epochs"] = 1
+    # config["N_clients"] = 2
+    # config["total_rounds"] = 2
+    # config["T_base"] = 0.0  # Run instantly
+    # config["eval_every"] = 1
+    # config["dataset"] = "MNIST"
+    # config["batch_size"] = 128  # Speed up loading/training
+    # config["local_epochs"] = 1
     
     print(
         f"N={config['N_clients']}, "
@@ -183,7 +183,7 @@ def run_config_2():
     config["total_rounds"] = 5
     config["T_base"] = 0.0  # Run instantly
     config["eval_every"] = 1
-    config["dataset"] = "MNIST"
+    # config["dataset"] = "MNIST"
     config["batch_size"] = 128
     config["local_epochs"] = 1
     
@@ -230,8 +230,8 @@ def _run_attacks(attacks: list, label: str) -> None:
         config["total_rounds"] = 5
         config["T_base"] = 0.0
         config["eval_every"] = 1
-        config["dataset"] = "MNIST"
-        config["batch_size"] = 128
+        # config["dataset"] = "MNIST"
+        config["batch_size"] = 32
         config["local_epochs"] = 1
         # --- Burn-in fix (smoke-test only) ----------------------------
         # Production K_base=50 causes N_burn=50 which equals total updates
