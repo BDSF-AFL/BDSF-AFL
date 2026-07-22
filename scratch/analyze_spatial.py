@@ -326,7 +326,7 @@ def main():
     dataloaders = partitioner.partition()
     print_label_histograms(dataloaders, base_config.get("dataset", "MNIST"))
     
-    dataset_name = base_config.get("dataset", "MNIST")
+    dataset_name = input("Enter dataset : ")
     for i, loader in enumerate(dataloaders):
         subset_indices = loader.dataset.indices
         if dataset_name == "MNIST":
