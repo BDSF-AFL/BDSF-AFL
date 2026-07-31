@@ -1,13 +1,45 @@
+import os
+import glob
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from typing import List
 
+def _resolve_data_dir(config: dict, dataset_name: str) -> str:
+    user_dir = config.get("data_dir", None)
+    if user_dir and user_dir != "./data":
+        if dataset_name == "CIFAR10" and user_dir.endswith("cifar-10-batches-py"):
+            parent = os.path.dirname(user_dir)
+            if os.path.exists(parent):
+                return parent
+        return user_dir
+
+    if os.path.exists("/kaggle/input"):
+        if dataset_name == "CIFAR10":
+            candidates = [
+                "/kaggle/input/datasets/pankrzysiu/cifar10-python",
+                "/kaggle/input/cifar10-python",
+                "/kaggle/input/cifar10",
+                "/kaggle/input/cifar-10",
+            ]
+            for cand in candidates:
+                if os.path.exists(os.path.join(cand, "cifar-10-batches-py")):
+                    return cand
+            matches = glob.glob("/kaggle/input/**/cifar-10-batches-py", recursive=True)
+            if matches:
+                return os.path.dirname(matches[0])
+        elif dataset_name in ("MNIST", "FEMNIST"):
+            matches = glob.glob("/kaggle/input/**/MNIST", recursive=True)
+            if matches:
+                return os.path.dirname(matches[0])
+
+    return config.get("data_dir", "./data")
+
 class DataPartitioner:
     def __init__(self, config: dict):
         self.dataset_name = config.get("dataset", "CIFAR10")
-        self.data_dir = config.get("data_dir", "./data")
+        self.data_dir = _resolve_data_dir(config, self.dataset_name)
         self.N = config.get("N_clients", config.get("N", 20))
         self.dirichlet_alpha = config.get("dirichlet_alpha", 0.1)
         self.seed = config.get("seed", 42)
