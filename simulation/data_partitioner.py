@@ -54,7 +54,7 @@ class DataPartitioner:
         for i in range(self.N):
             subset = Subset(train_dataset, client_indices[i])
             loader = DataLoader(subset, batch_size=self.batch_size, shuffle=True,
-                                drop_last=True, num_workers=2)
+                                drop_last=True, num_workers=0)
             loaders.append(loader)
             
         return loaders

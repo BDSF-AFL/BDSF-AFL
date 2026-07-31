@@ -4,6 +4,7 @@ import copy
 import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from typing import Tuple, Dict, Any, Optional
 
@@ -39,22 +40,51 @@ class MNISTMLP(nn.Module):
         return self.fc2(x)
 
 class CIFAR10CNN(nn.Module):
+    """Deeper CNN with GroupNorm for CIFAR-10.
+
+    GroupNorm is used instead of BatchNorm because the FL weight
+    serialisation pipeline (model.parameters()) would silently drop
+    BN running-statistic buffers.  GroupNorm parameters are regular
+    learnable weights and are fully compatible.
+    """
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(64 * 4 * 4, 64)
-        self.fc2 = nn.Linear(64, 10)
-        self.relu = nn.ReLU()
+        # Block 1: 3 -> 64, 32x32 -> 16x16
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
+        self.gn1   = nn.GroupNorm(8, 64)
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.gn2   = nn.GroupNorm(8, 64)
+
+        # Block 2: 64 -> 128, 16x16 -> 8x8
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.gn3   = nn.GroupNorm(8, 128)
+        self.conv4 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
+        self.gn4   = nn.GroupNorm(8, 128)
+
+        # Block 3: 128 -> 256, 8x8 -> 4x4
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.gn5   = nn.GroupNorm(8, 256)
+
+        self.pool    = nn.MaxPool2d(2, 2)
+        self.dropout = nn.Dropout(0.3)
+        self.fc1     = nn.Linear(256 * 4 * 4, 256)
+        self.fc2     = nn.Linear(256, 10)
 
     def forward(self, x):
-        x = self.pool(self.relu(self.conv1(x)))
-        x = self.pool(self.relu(self.conv2(x)))
-        x = self.pool(self.relu(self.conv3(x)))
-        x = x.view(-1, 64 * 4 * 4)
-        x = self.relu(self.fc1(x))
+        # Block 1: 32x32 -> 16x16
+        x = F.relu(self.gn1(self.conv1(x)))
+        x = self.pool(F.relu(self.gn2(self.conv2(x))))
+
+        # Block 2: 16x16 -> 8x8
+        x = F.relu(self.gn3(self.conv3(x)))
+        x = self.pool(F.relu(self.gn4(self.conv4(x))))
+
+        # Block 3: 8x8 -> 4x4
+        x = self.pool(F.relu(self.gn5(self.conv5(x))))
+
+        # Classifier
+        x = x.view(-1, 256 * 4 * 4)
+        x = self.dropout(F.relu(self.fc1(x)))
         return self.fc2(x)
 
 def _build_model(config: dict) -> Tuple[nn.Module, torch.Tensor]:
