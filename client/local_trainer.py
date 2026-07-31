@@ -4,6 +4,9 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from typing import Callable
 
+from utils.device_utils import mark_step
+
+
 class LocalTrainer:
     def __init__(self, model: nn.Module, dataloader: DataLoader, config: dict):
         self.device = config.get("device", "cpu")
@@ -42,6 +45,8 @@ class LocalTrainer:
                     
                 loss.backward()
                 optimizer.step()
+                # Flush XLA graph after each step (no-op on CUDA/CPU)
+                mark_step()
                 
         W_local = self._get_flat_weights()
         delta_W = W_local - W_global.cpu()

@@ -7,6 +7,7 @@ from typing import List
 class DataPartitioner:
     def __init__(self, config: dict):
         self.dataset_name = config.get("dataset", "CIFAR10")
+        self.data_dir = config.get("data_dir", "./data")
         self.N = config.get("N_clients", config.get("N", 20))
         self.dirichlet_alpha = config.get("dirichlet_alpha", 0.1)
         self.seed = config.get("seed", 42)
@@ -31,10 +32,10 @@ class DataPartitioner:
         
         # Load train dataset
         if self.dataset_name == "MNIST":
-            train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=self.transform)
+            train_dataset = datasets.MNIST(root=self.data_dir, train=True, download=True, transform=self.transform)
             targets = train_dataset.targets.numpy()
         else:
-            train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=self.transform)
+            train_dataset = datasets.CIFAR10(root=self.data_dir, train=True, download=True, transform=self.transform)
             targets = np.array(train_dataset.targets)
             
         num_samples = len(train_dataset)
@@ -52,7 +53,8 @@ class DataPartitioner:
         loaders = []
         for i in range(self.N):
             subset = Subset(train_dataset, client_indices[i])
-            loader = DataLoader(subset, batch_size=self.batch_size, shuffle=True)
+            loader = DataLoader(subset, batch_size=self.batch_size, shuffle=True,
+                                drop_last=True, num_workers=2)
             loaders.append(loader)
             
         return loaders
@@ -81,8 +83,8 @@ class DataPartitioner:
     def get_test_loader(self) -> DataLoader:
         """Returns the test set DataLoader."""
         if self.dataset_name == "MNIST":
-            test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=self.transform)
+            test_dataset = datasets.MNIST(root=self.data_dir, train=False, download=True, transform=self.transform)
         else:
-            test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=self.transform)
+            test_dataset = datasets.CIFAR10(root=self.data_dir, train=False, download=True, transform=self.transform)
             
         return DataLoader(test_dataset, batch_size=256, shuffle=False)

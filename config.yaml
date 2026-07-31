@@ -1,11 +1,11 @@
 # BDSF-AFL Full Configuration
 
 # System
-N_clients: 10
-total_rounds: 30
+N_clients: 20
+total_rounds: 200
 eval_every: 5
 log_dir: "logs/"
-device: "cuda"
+device: "cpu"              # auto-detected at runtime (TPU > CUDA > CPU)
 
 # Dataset
 dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST

@@ -15,12 +15,14 @@ from client.client_node import ClientNode
 from client.local_trainer import LocalTrainer
 from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
+from utils.device_utils import resolve_device, mark_step, set_xla_seed
 import utils.metrics as metrics
 
 def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    set_xla_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
@@ -224,7 +226,7 @@ class SimulationEnvironment:
         accuracy_log = []
         total_rounds = self.config.get("total_rounds", 500)
         eval_every   = self.config.get("eval_every", 10)
-        device       = self.config.get("device", "cpu")
+        device       = resolve_device(self.config)  # resolves and stores device object in config
 
         # Total accepted updates to process (re-interprets total_rounds as per-client rounds)
         total_updates      = total_rounds * N

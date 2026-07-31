@@ -2,7 +2,9 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 
-def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: torch.Tensor, device: str = "cpu") -> float:
+from utils.device_utils import mark_step
+
+def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: torch.Tensor, device = "cpu") -> float:
     model = model.to(device)
     offset = 0
     with torch.no_grad():
@@ -20,6 +22,8 @@ def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: 
             predicted = outputs.argmax(dim=1)
             correct += (predicted == labels.to(device)).sum().item()
             total += labels.size(0)
+        # Flush any pending XLA ops after eval loop (no-op on CUDA/CPU)
+        mark_step()
 
     return correct / total if total > 0 else 0.0
 

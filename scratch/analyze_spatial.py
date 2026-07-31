@@ -10,13 +10,7 @@ import asyncio
 import time
 from typing import List
 
-# TPU support via torch_xla (Kaggle TPU)
-try:
-    import torch_xla
-    import torch_xla.core.xla_model as xm
-    XLA_AVAILABLE = True
-except ImportError:
-    XLA_AVAILABLE = False
+from utils.device_utils import resolve_device, device_name, XLA_AVAILABLE
 
 from simulation.data_partitioner import DataPartitioner
 from simulation.environment import SimulationEnvironment, _build_model
@@ -245,7 +239,7 @@ def load_config():
     with open("config.yaml", "r") as f:
         return yaml.safe_load(f)
 
-def compute_metrics(csv_path, byz_ids, honest_ids):
+def compute_metrics(csv_path, byz_ids, honest_ids, n_clients=20):
     decisions = {}
     
     if not os.path.exists(csv_path):
@@ -292,7 +286,7 @@ def compute_metrics(csv_path, byz_ids, honest_ids):
     rounds_sorted = sorted(list(set(r for r, c in decisions.keys())))
     
     for r in rounds_sorted:
-        for c in range(20):
+        for c in range(n_clients):
             if (r, c) in decisions and decisions[(r, c)] == "ACCEPT":
                 accepted_count += 1
                 if accepted_count <= 10:
@@ -326,26 +320,10 @@ def main():
     os.makedirs("logs", exist_ok=True)
     
     # --- Device selection: TPU > CUDA > CPU ---
-    if XLA_AVAILABLE:
-        device = xm.xla_device()
-        device_str = "xla"  # used in config (string form)
-        print("\n" + "=" * 80)
-        print(f"DEVICE: TPU ({device})")
-        print("=" * 80)
-    elif torch.cuda.is_available():
-        device = "cuda"
-        device_str = "cuda"
-        print("\n" + "=" * 80)
-        print(f"DEVICE: CUDA ({torch.cuda.get_device_name(0)})")
-        print("=" * 80)
-    else:
-        device = "cpu"
-        device_str = "cpu"
-        print("\n" + "=" * 80)
-        print("DEVICE: CPU (no GPU/TPU detected)")
-        print("=" * 80)
-    
-    base_config["device"] = device_str
+    device = resolve_device(base_config)
+    print("\n" + "=" * 80)
+    print(f"DEVICE: {device_name(device)}")
+    print("=" * 80)
     
     # 1. Setup base data partitions for stats
     # (Removed base_config["dataset"] = "MNIST" to strictly use config.yaml)
@@ -429,7 +407,8 @@ def main():
             
             # Read CSV outputs for metrics calculation
             csv_path = f"logs/phase2_{mode}_{attack}_42_updates.csv"
-            frr, tpr, tpr_ex = compute_metrics(csv_path, res["byz_ids"], res["honest_ids"])
+            N = config.get("N_clients", 20)
+            frr, tpr, tpr_ex = compute_metrics(csv_path, res["byz_ids"], res["honest_ids"], n_clients=N)
             final_acc = res["accuracy_log"][-1] if res["accuracy_log"] else 0.0
             
             avg_ref_drift = np.mean(current_run_ref_drift_angles) if current_run_ref_drift_angles else 0.0
