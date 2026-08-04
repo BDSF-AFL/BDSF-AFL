@@ -5,7 +5,7 @@ N_clients: 20
 total_rounds: 200
 eval_every: 5
 log_dir: "logs/"
-device: "cpu"              # auto-detected at runtime (TPU > CUDA > CPU)
+device: "tpu"              # auto-detected at runtime (TPU > CUDA > CPU)
 
 # Dataset
 dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST
