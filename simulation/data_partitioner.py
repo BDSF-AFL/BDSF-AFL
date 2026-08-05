@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, Subset
@@ -7,7 +8,7 @@ from typing import List
 class DataPartitioner:
     def __init__(self, config: dict):
         self.dataset_name = config.get("dataset", "CIFAR10")
-        self.data_dir = config.get("data_dir", "./data")
+        self.data_dir = self._resolve_data_dir(config)
         self.N = config.get("N_clients", config.get("N", 20))
         self.dirichlet_alpha = config.get("dirichlet_alpha", 0.1)
         self.seed = config.get("seed", 42)
@@ -25,6 +26,35 @@ class DataPartitioner:
                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
             ])
 
+    def _resolve_data_dir(self, config: dict) -> str:
+        """Resolves existing data directory, checking Kaggle paths before fallback."""
+        configured_dir = config.get("data_dir")
+        if configured_dir:
+            if configured_dir.endswith("cifar-10-batches-py") and os.path.exists(configured_dir):
+                return os.path.dirname(configured_dir)
+            if os.path.exists(configured_dir):
+                return configured_dir
+
+        candidates = [
+            "/kaggle/input/datasets/pankrzysiu/cifar10-python/cifar-10-batches-py",
+            "/kaggle/input/datasets/pankrzysiu/cifar10-python",
+            "/kaggle/input/cifar10-python/cifar-10-batches-py",
+            "/kaggle/input/cifar10-python",
+            "/kaggle/input/cifar10/cifar-10-batches-py",
+            "/kaggle/input/cifar10",
+            "./data/cifar-10-batches-py",
+            "./data"
+        ]
+
+        for cand in candidates:
+            if os.path.exists(cand):
+                if cand.endswith("cifar-10-batches-py"):
+                    return os.path.dirname(cand)
+                if os.path.exists(os.path.join(cand, "cifar-10-batches-py")) or self.dataset_name != "CIFAR10":
+                    return cand
+
+        return configured_dir if configured_dir else "./data"
+
     def partition(self) -> List[DataLoader]:
         """Partitions the training dataset and returns N DataLoaders."""
         np.random.seed(self.seed)
@@ -32,10 +62,14 @@ class DataPartitioner:
         
         # Load train dataset
         if self.dataset_name == "MNIST":
-            train_dataset = datasets.MNIST(root=self.data_dir, train=True, download=True, transform=self.transform)
+            mnist_path = os.path.join(self.data_dir, "MNIST")
+            should_download = not os.path.exists(mnist_path)
+            train_dataset = datasets.MNIST(root=self.data_dir, train=True, download=should_download, transform=self.transform)
             targets = train_dataset.targets.numpy()
         else:
-            train_dataset = datasets.CIFAR10(root=self.data_dir, train=True, download=True, transform=self.transform)
+            cifar_path = os.path.join(self.data_dir, "cifar-10-batches-py")
+            should_download = not os.path.exists(cifar_path)
+            train_dataset = datasets.CIFAR10(root=self.data_dir, train=True, download=should_download, transform=self.transform)
             targets = np.array(train_dataset.targets)
             
         num_samples = len(train_dataset)
@@ -83,8 +117,13 @@ class DataPartitioner:
     def get_test_loader(self) -> DataLoader:
         """Returns the test set DataLoader."""
         if self.dataset_name == "MNIST":
-            test_dataset = datasets.MNIST(root=self.data_dir, train=False, download=True, transform=self.transform)
+            mnist_path = os.path.join(self.data_dir, "MNIST")
+            should_download = not os.path.exists(mnist_path)
+            test_dataset = datasets.MNIST(root=self.data_dir, train=False, download=should_download, transform=self.transform)
         else:
-            test_dataset = datasets.CIFAR10(root=self.data_dir, train=False, download=True, transform=self.transform)
+            cifar_path = os.path.join(self.data_dir, "cifar-10-batches-py")
+            should_download = not os.path.exists(cifar_path)
+            test_dataset = datasets.CIFAR10(root=self.data_dir, train=False, download=should_download, transform=self.transform)
             
         return DataLoader(test_dataset, batch_size=256, shuffle=False)
+
