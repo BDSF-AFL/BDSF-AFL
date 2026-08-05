@@ -5,6 +5,9 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from typing import List
 
+# pin_memory speeds CPU→GPU transfers when CUDA is available
+_PIN_MEMORY = torch.cuda.is_available()
+
 class DataPartitioner:
     def __init__(self, config: dict):
         self.dataset_name = config.get("dataset", "CIFAR10")
@@ -87,8 +90,15 @@ class DataPartitioner:
         loaders = []
         for i in range(self.N):
             subset = Subset(train_dataset, client_indices[i])
-            loader = DataLoader(subset, batch_size=self.batch_size, shuffle=True,
-                                drop_last=True, num_workers=2)
+            loader = DataLoader(
+                subset,
+                batch_size=self.batch_size,
+                shuffle=True,
+                drop_last=True,
+                num_workers=0,      # no subprocess workers — eliminates 40-worker CPU spike
+                pin_memory=_PIN_MEMORY,  # enables fast CPU→GPU page-locked transfers
+                persistent_workers=False,
+            )
             loaders.append(loader)
             
         return loaders
@@ -125,5 +135,12 @@ class DataPartitioner:
             should_download = not os.path.exists(cifar_path)
             test_dataset = datasets.CIFAR10(root=self.data_dir, train=False, download=should_download, transform=self.transform)
             
-        return DataLoader(test_dataset, batch_size=256, shuffle=False)
+        return DataLoader(
+            test_dataset,
+            batch_size=512,          # larger batch → GPU stays full during eval
+            shuffle=False,
+            num_workers=0,
+            pin_memory=_PIN_MEMORY,
+        )
+
 

@@ -6,6 +6,13 @@ from typing import Callable
 
 from utils.device_utils import mark_step
 
+# GradScaler for AMP mixed-precision (no-op on CPU or older GPUs)
+try:
+    from torch.amp import autocast, GradScaler
+    _AMP_AVAILABLE = True
+except ImportError:
+    _AMP_AVAILABLE = False
+
 
 class LocalTrainer:
     def __init__(self, model: nn.Module, dataloader: DataLoader, config: dict):
@@ -16,6 +23,11 @@ class LocalTrainer:
         self.local_lr = config.get("local_lr", 0.01)
         self.fedprox_mu = config.get("fedprox_mu", 0.0)
         self.criterion = nn.CrossEntropyLoss()
+        # Enable AMP (FP16 mixed precision) on CUDA — ~2x throughput on T4/A100
+        _is_cuda = isinstance(self.device, torch.device) and self.device.type == "cuda"
+        _is_cuda = _is_cuda or (isinstance(self.device, str) and "cuda" in self.device)
+        self._use_amp = _AMP_AVAILABLE and _is_cuda
+        self._scaler = GradScaler(device="cuda") if self._use_amp else None
 
     def train(self, W_global: torch.Tensor) -> torch.Tensor:
         self._load_weights(W_global)
@@ -25,26 +37,46 @@ class LocalTrainer:
         
         for epoch in range(self.local_epochs):
             for inputs, labels in self.dataloader:
-                inputs, labels = inputs.to(self.device), labels.to(self.device)
+                # non_blocking=True overlaps CPU→GPU transfer with GPU compute
+                inputs = inputs.to(self.device, non_blocking=True)
+                labels = labels.to(self.device, non_blocking=True)
                 optimizer.zero_grad()
-                outputs = self.model(inputs)
-                ce_loss = self.criterion(outputs, labels)
-                
-                if self.fedprox_mu > 0:
-                    prox_term = 0.0
-                    offset = 0
-                    for param in self.model.parameters():
-                        numel = param.numel()
-                        ref_param = W_ref[offset:offset + numel].reshape(param.shape)
-                        prox_term += torch.norm(param - ref_param) ** 2
-                        offset += numel
-                    prox_term = (self.fedprox_mu / 2.0) * prox_term
-                    loss = ce_loss + prox_term
+
+                if self._use_amp:
+                    with autocast(device_type="cuda"):
+                        outputs = self.model(inputs)
+                        ce_loss = self.criterion(outputs, labels)
+                        if self.fedprox_mu > 0:
+                            prox_term = 0.0
+                            offset = 0
+                            for param in self.model.parameters():
+                                numel = param.numel()
+                                ref_param = W_ref[offset:offset + numel].reshape(param.shape)
+                                prox_term += torch.norm(param - ref_param) ** 2
+                                offset += numel
+                            loss = ce_loss + (self.fedprox_mu / 2.0) * prox_term
+                        else:
+                            loss = ce_loss
+                    self._scaler.scale(loss).backward()
+                    self._scaler.step(optimizer)
+                    self._scaler.update()
                 else:
-                    loss = ce_loss
-                    
-                loss.backward()
-                optimizer.step()
+                    outputs = self.model(inputs)
+                    ce_loss = self.criterion(outputs, labels)
+                    if self.fedprox_mu > 0:
+                        prox_term = 0.0
+                        offset = 0
+                        for param in self.model.parameters():
+                            numel = param.numel()
+                            ref_param = W_ref[offset:offset + numel].reshape(param.shape)
+                            prox_term += torch.norm(param - ref_param) ** 2
+                            offset += numel
+                        loss = ce_loss + (self.fedprox_mu / 2.0) * prox_term
+                    else:
+                        loss = ce_loss
+                    loss.backward()
+                    optimizer.step()
+
                 # Flush XLA graph after each step (no-op on CUDA/CPU)
                 mark_step()
                 

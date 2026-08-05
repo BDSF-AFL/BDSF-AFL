@@ -15,7 +15,7 @@ from client.client_node import ClientNode
 from client.local_trainer import LocalTrainer
 from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
-from utils.device_utils import resolve_device, mark_step, set_xla_seed
+from utils.device_utils import resolve_device, resolve_all_devices, gpu_count, mark_step, set_xla_seed
 import utils.metrics as metrics
 
 def set_seed(seed: int) -> None:
@@ -190,13 +190,25 @@ class SimulationEnvironment:
             server.register_client_ground_truth(cid, is_byzantine=True)
             
         # 7. Create ClientNode and ForceSyncHandler instances
+        #    Distribute clients round-robin across all available GPUs so that
+        #    on a dual-T4 Kaggle instance 10 clients train on cuda:0 and 10 on cuda:1.
+        all_devices = resolve_all_devices()
+        n_gpus = len(all_devices)
+        print(f"  >> Distributing {N} clients across {n_gpus} device(s): "
+              f"{[str(d) for d in all_devices]}")
+
         clients = []
         for i in range(N):
+            # Round-robin device assignment
+            client_device = all_devices[i % n_gpus]
+            client_config = dict(self.config)       # shallow copy is safe — no mutable nested dicts are written
+            client_config["device"] = client_device
+
             local_model = copy.deepcopy(model)
-            trainer = LocalTrainer(local_model, dataloaders[i], self.config)
+            trainer = LocalTrainer(local_model, dataloaders[i], client_config)
             session_key = server.get_session_key(i)
             fs_handler = ForceSyncHandler(i, session_key, logger)
-            client_node = ClientNode(i, trainer, server, fs_handler, self.config, logger)
+            client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger)
             
             if i in byz_ids:
                 injector = AttackInjector(self.attack_type, i, self.config)
@@ -226,7 +238,15 @@ class SimulationEnvironment:
         accuracy_log = []
         total_rounds = self.config.get("total_rounds", 500)
         eval_every   = self.config.get("eval_every", 10)
-        device       = resolve_device(self.config)  # resolves and stores device object in config
+        # Primary device for server-side ops (eval, aggregation weight vectors)
+        device       = resolve_device(self.config)  # resolves and stores primary device in config
+
+        # Compile model for eval if torch.compile is available (PyTorch 2+)
+        if hasattr(torch, "compile") and str(device).startswith("cuda"):
+            try:
+                model = torch.compile(model, mode="reduce-overhead")
+            except Exception:
+                pass  # torch.compile not supported on this platform
 
         # Total accepted updates to process (re-interprets total_rounds as per-client rounds)
         total_updates      = total_rounds * N
