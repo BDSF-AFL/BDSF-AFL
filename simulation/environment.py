@@ -22,6 +22,12 @@ import utils.metrics as metrics
 
 def _run_trainer_in_process(model: nn.Module, dataloader, config: dict, W_global: torch.Tensor) -> torch.Tensor:
     """Standalone worker function executed inside ProcessPoolExecutor for true GPU parallelism."""
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        try:
+            torch.set_num_interop_threads(1)
+        except Exception:
+            pass
     trainer = LocalTrainer(model, dataloader, config)
     return trainer.train(W_global)
 
