@@ -89,6 +89,12 @@ class LocalTrainer:
                 
         W_local = self._get_flat_weights()
         delta_W = W_local - W_global.cpu()
+
+        # VRAM cleanup: delete references and flush PyTorch CUDA allocator cache
+        del W_ref, optimizer
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         return delta_W
 
     def _load_weights(self, W: torch.Tensor) -> None:

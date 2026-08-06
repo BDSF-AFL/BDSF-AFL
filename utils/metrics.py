@@ -25,6 +25,9 @@ def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: 
         # Flush any pending XLA ops after eval loop (no-op on CUDA/CPU)
         mark_step()
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return correct / total if total > 0 else 0.0
 
 def compute_attack_success_rate(rejection_log: list[dict], byzantine_ids: set[int]) -> float:
