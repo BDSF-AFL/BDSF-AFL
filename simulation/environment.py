@@ -2,6 +2,8 @@ import asyncio
 import time
 import copy
 import random
+import concurrent.futures
+import multiprocessing
 import torch
 import torch.nn as nn
 import numpy as np
@@ -17,6 +19,11 @@ from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
 from utils.device_utils import resolve_device, resolve_all_devices, gpu_count, mark_step, set_xla_seed
 import utils.metrics as metrics
+
+def _run_trainer_in_process(model: nn.Module, dataloader, config: dict, W_global: torch.Tensor) -> torch.Tensor:
+    """Standalone worker function executed inside ProcessPoolExecutor for true GPU parallelism."""
+    trainer = LocalTrainer(model, dataloader, config)
+    return trainer.train(W_global)
 
 def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
@@ -97,7 +104,13 @@ class AttackInjectorWrapper:
         await self.client._simulate_delay()
  
         # 3. Train locally to get honest gradient
-        honest_delta_W = self.client.trainer.train(W_global)
+        if getattr(self.client, "pool", None) is not None:
+            loop = asyncio.get_running_loop()
+            honest_delta_W = await loop.run_in_executor(
+                self.client.pool, _run_trainer_in_process, self.client.local_model, self.client.dataloader, self.client.config, W_global
+            )
+        else:
+            honest_delta_W = self.client.trainer.train(W_global)
         t_submit_honest = self.server.get_virtual_time()
         
         # Calculate honest gap g_i
@@ -197,6 +210,11 @@ class SimulationEnvironment:
         print(f"  >> Distributing {N} clients across {n_gpus} device(s): "
               f"{[str(d) for d in all_devices]}")
 
+        # Multi-process pool for parallel GPU training across cuda:0 and cuda:1
+        use_pool = torch.cuda.is_available() and n_gpus > 1
+        mp_ctx = multiprocessing.get_context("spawn") if use_pool else None
+        pool = concurrent.futures.ProcessPoolExecutor(max_workers=n_gpus, mp_context=mp_ctx) if use_pool else None
+
         clients = []
         for i in range(N):
             # Round-robin device assignment
@@ -208,7 +226,7 @@ class SimulationEnvironment:
             trainer = LocalTrainer(local_model, dataloaders[i], client_config)
             session_key = server.get_session_key(i)
             fs_handler = ForceSyncHandler(i, session_key, logger)
-            client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger)
+            client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger, local_model=local_model, dataloader=dataloaders[i], pool=pool)
             
             if i in byz_ids:
                 injector = AttackInjector(self.attack_type, i, self.config)
@@ -336,7 +354,11 @@ class SimulationEnvironment:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         # Run the true-async loop
-        asyncio.run(run_loop())
+        try:
+            asyncio.run(run_loop())
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)
         
         # Return results
         return {

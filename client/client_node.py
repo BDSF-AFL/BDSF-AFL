@@ -8,13 +8,16 @@ from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
 
 class ClientNode:
-    def __init__(self, client_id: int, trainer: LocalTrainer, server: object, force_sync_handler: ForceSyncHandler, config: dict, logger: BDSFLogger):
+    def __init__(self, client_id: int, trainer: LocalTrainer, server: object, force_sync_handler: ForceSyncHandler, config: dict, logger: BDSFLogger, local_model = None, dataloader = None, pool = None):
         self.client_id = client_id
         self.trainer = trainer
         self.server = server
         self.fs_handler = force_sync_handler
         self.config = config
         self.logger = logger
+        self.local_model = local_model
+        self.dataloader = dataloader
+        self.pool = pool
         self._state = {"W_local": None, "gradient_buffer": [], "last_reset_time": 0.0}
         self._mu_delay = config.get("lognormal_mu", 0.5)
         self._sigma_delay = config.get("lognormal_sigma", 1.0)
@@ -37,7 +40,14 @@ class ClientNode:
         await self._simulate_delay()
  
         # 3. Train locally
-        delta_W = self.trainer.train(W_global)
+        if self.pool is not None:
+            from simulation.environment import _run_trainer_in_process
+            loop = asyncio.get_running_loop()
+            delta_W = await loop.run_in_executor(
+                self.pool, _run_trainer_in_process, self.local_model, self.dataloader, self.config, W_global
+            )
+        else:
+            delta_W = self.trainer.train(W_global)
  
         # 4. Build submission
         t_submit = self.server.get_virtual_time()
