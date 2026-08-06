@@ -10,7 +10,7 @@ device: "cpu"              # auto-detected at runtime (TPU > CUDA > CPU)
 # Dataset
 dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST
 dirichlet_alpha: 0.1     # 0.1=heterogeneous | 0.5=moderate | .inf=IID
-batch_size: 32
+batch_size: 256        # 256 saturates T4 GPU compute units for maximum throughput
 
 # Client training
 local_epochs: 5

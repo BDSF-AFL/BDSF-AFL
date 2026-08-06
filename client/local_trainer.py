@@ -28,8 +28,15 @@ class LocalTrainer:
         _is_cuda = _is_cuda or (isinstance(self.device, str) and "cuda" in self.device)
         self._use_amp = _AMP_AVAILABLE and _is_cuda
         self._scaler = GradScaler(device="cuda") if self._use_amp else None
+        self._stream = torch.cuda.Stream(device=self.device) if _is_cuda else None
 
     def train(self, W_global: torch.Tensor) -> torch.Tensor:
+        if self._stream is not None:
+            with torch.cuda.stream(self._stream):
+                return self._train_impl(W_global)
+        return self._train_impl(W_global)
+
+    def _train_impl(self, W_global: torch.Tensor) -> torch.Tensor:
         self._load_weights(W_global)
         W_ref = W_global.clone().to(self.device)
         optimizer = optim.SGD(self.model.parameters(), lr=self.local_lr)
