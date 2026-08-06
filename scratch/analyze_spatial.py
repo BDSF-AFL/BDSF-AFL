@@ -28,6 +28,7 @@ prev_client_grad = {}
 rejection_encountered = {1: False, 6: False, 16: False}
 
 drift_csv_path = ""
+spatial_analysis_csv_path = ""
 current_run_ref_drift_angles = []
 current_run_client_similarities = {1: [], 6: [], 16: []}
 current_run_honest_similarities = []
@@ -99,7 +100,7 @@ original_cosine_check = SpatialValidator.cosine_check
 
 def patched_cosine_check(self, delta_W: torch.Tensor) -> bool:
     global global_update_counter, prev_ref, prev_client_grad, rejection_encountered
-    global global_config, drift_csv_path, current_run_ref_drift_angles, current_run_client_similarities
+    global global_config, drift_csv_path, spatial_analysis_csv_path, current_run_ref_drift_angles, current_run_client_similarities
     global current_run_honest_similarities
     
     global_update_counter += 1
@@ -221,6 +222,46 @@ def patched_cosine_check(self, delta_W: torch.Tensor) -> bool:
                     contrib_str,
                     str(contributors)
                 ])
+
+    # 2. Save dedicated Spatial Validator CSV for EVERY update reaching spatial validator
+    if spatial_analysis_csv_path:
+        clipping_applied = False
+        if res and getattr(self, "adaptive_clip_enabled", True):
+            if len(self._buffer) >= 2:
+                norms = [torch.norm(e.delta_W).item() for e in self._buffer]
+                C = float(np.median(norms)) * getattr(self, "gamma_clip", 1.5)
+                if torch.norm(delta_W).item() > C:
+                    clipping_applied = True
+
+        status_val = "ACCEPT" if res else "REJECT"
+        rejection_reason = "N/A" if res else "SPATIAL_COSINE"
+        margin_val = (sim - self.theta_cos) if sim is not None else "N/A"
+        ref_norm_val = torch.norm(ref).item() if ref is not None else 0.0
+        client_norm_val = torch.norm(delta_W).item()
+
+        ranked_all = sorted(
+            self._buffer,
+            key=lambda e: e.I_score * e.P_score,
+            reverse=True,
+        )
+        top_k_all = ranked_all[: min(self.K_ref, len(ranked_all))]
+        topk_contributors = [getattr(e, "client_id", "?") for e in top_k_all]
+
+        with open(spatial_analysis_csv_path, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                self_server.round_number if self_server else "N/A",
+                client_id,
+                status_val,
+                sim if sim is not None else "N/A",
+                self.theta_cos,
+                margin_val,
+                ref_norm_val,
+                client_norm_val,
+                str(topk_contributors),
+                clipping_applied,
+                rejection_reason
+            ])
             
         if not res:
             rejection_encountered[client_id] = True
@@ -407,6 +448,15 @@ def main():
                     "local_epochs", "sim", "angle", "theta", "margin", "norm", "I_i", "P_i",
                     "ref_drift_sim", "ref_drift_angle", "client_drift_sim", "client_drift_angle",
                     "contributed", "contributors"
+                ])
+
+            spatial_analysis_csv_path = f"logs/phase2_{mode}_{attack}_spatial_analysis.csv"
+            with open(spatial_analysis_csv_path, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "round", "client_id", "status", "cos_sim", "theta_cos",
+                    "margin", "reference_norm", "client_update_norm",
+                    "topk_contributor_ids", "clipping_applied", "rejection_reason"
                 ])
                 
             run_start = time.time()
