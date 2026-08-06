@@ -37,7 +37,7 @@ class ClientNode:
         await self._simulate_delay()
  
         # 3. Train locally
-        delta_W = self.trainer.train(W_global)
+        delta_W = await asyncio.to_thread(self.trainer.train, W_global)
  
         # 4. Build submission
         t_submit = self.server.get_virtual_time()

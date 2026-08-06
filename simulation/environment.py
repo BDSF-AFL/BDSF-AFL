@@ -97,7 +97,7 @@ class AttackInjectorWrapper:
         await self.client._simulate_delay()
  
         # 3. Train locally to get honest gradient
-        honest_delta_W = self.client.trainer.train(W_global)
+        honest_delta_W = await asyncio.to_thread(self.client.trainer.train, W_global)
         t_submit_honest = self.server.get_virtual_time()
         
         # Calculate honest gap g_i
