@@ -1,0 +1,471 @@
+import time
+import os
+from collections import deque
+from typing import Optional
+
+import torch
+import numpy as np
+
+from shared.types import (UpdateSubmission, AcceptedEntry,
+                          ForceSyncPayload, ClientRegistration)
+from server.temporal_filter import TemporalFilter
+from server.force_sync import ForceSyncDispatcher
+from server.reputation_manager import ReputationManager
+from server.spatial_validator import SpatialValidator
+from utils.logger import BDSFLogger
+
+
+class AggregatorServer:
+    """Central orchestrator for the BDSF-AFL defense pipeline.
+
+    Receives ``UpdateSubmission`` objects from clients and runs the full
+    12-step decision pipeline:
+        temporal gate -> spatial cosine check -> adaptive clip ->
+        reputation-weighted merge -> recovery -> log.
+
+    Maintains global model weights, per-client registry, and the
+    accepted gradient buffer shared with ``SpatialValidator``.
+    """
+
+    def __init__(
+        self,
+        config: dict,
+        W_init: torch.Tensor,
+        client_ids: list[int],
+        logger: BDSFLogger,
+    ) -> None:
+        # Step 1: Store config and logger
+        self.config = config
+        self.logger = logger
+
+        # Step 2: Current global model (flattened 1D float32)
+        self.W_global: torch.Tensor = W_init.clone().float()
+
+        # Step 3: Client IDs
+        self.client_ids = client_ids
+
+        # Step 4: Number of clients
+        N = len(client_ids)
+
+        # Step 5: Compute burn-in count
+        self.N_burn: int = max(4 * N, config.get("K_base", 50))
+
+        # Step 6: Create a local config copy with burn_in_count for TemporalFilter
+        tf_config = dict(config)
+        tf_config["burn_in_count"] = self.N_burn
+
+        # Step 7: Instantiate temporal filter
+        self.temporal_filter = TemporalFilter(tf_config)
+
+        # Step 8: Instantiate reputation manager
+        self.rep_manager = ReputationManager(client_ids, config)
+
+        # Step 9: Buffer size
+        M = config.get("M", 30)
+
+        # Step 10: Instantiate spatial validator
+        self.spatial_validator = SpatialValidator(config)
+
+        # Step 11: Accepted buffer (shared concept with SpatialValidator)
+        self.accepted_buffer: deque[AcceptedEntry] = deque(maxlen=M)
+
+        # Step 12: Instantiate force-sync dispatcher
+        self.force_sync_dispatcher = ForceSyncDispatcher()
+        self.total_eval_time = 0.0
+
+        # Step 13: Build client registry
+        self.registry: dict[int, ClientRegistration] = {}
+        for cid in client_ids:
+            session_key = os.urandom(32)
+            self.registry[cid] = ClientRegistration(
+                client_id=cid,
+                session_key=session_key,
+                last_update_time=self.get_virtual_time(),
+                pull_time=self.get_virtual_time(),
+                is_byzantine=False,
+            )
+
+        # Step 14: Total accepted updates counter
+        self.update_counter: int = 0
+
+        # Step 15: Round number (incremented on each accepted update)
+        self.round_number: int = 0
+
+        # Step 16: Baseline aggregation configs
+        self.aggregation = config.get("aggregation", "bdsf_afl")
+        self.sync = config.get("sync", False)
+        self.sync_accumulator = {}
+        self.grad_history = {cid: [] for cid in client_ids}
+
+    # ------------------------------------------------------------------
+    # Main entry point — the 12-step pipeline
+    # ------------------------------------------------------------------
+
+    def handle_update(self, submission: UpdateSubmission) -> dict:
+        """Process a single client update through the selected aggregation pipeline."""
+        cid = submission.client_id
+        reg = self.registry[cid]
+        t_now = submission.t_submit
+        g_i = t_now - reg.last_update_time
+        I_i, P_i = self.rep_manager.get(cid)
+
+        if self.aggregation in ("fedavg", "fedprox"):
+            if self.sync:
+                # Synchronous aggregation
+                self.sync_accumulator[cid] = submission.delta_W.clone()
+                
+                if len(self.sync_accumulator) == len(self.client_ids):
+                    reg.last_update_time = t_now
+                    avg_delta = torch.stack(list(self.sync_accumulator.values())).mean(dim=0)
+                    self.W_global = self.W_global + self.config.get("eta", 0.01) * avg_delta
+                    self.sync_accumulator.clear()
+                    
+                    self.logger.log_update(
+                        round=self.round_number, client_id=cid,
+                        g_i=g_i, I_i=I_i, P_i=P_i,
+                        status="ACCEPT", reason="SYNC_ACCUMULATE",
+                    )
+                    ret_val = {
+                        "status": "ACCEPT",
+                        "reason": "SYNC_ACCUMULATE",
+                        "force_sync": None,
+                        "round": self.round_number,
+                        "I_i": I_i,
+                        "P_i": P_i,
+                    }
+                    self.update_counter += 1
+                    self.round_number += 1
+                    return ret_val
+                else:
+                    reg.last_update_time = t_now
+                    self.logger.log_update(
+                        round=self.round_number, client_id=cid,
+                        g_i=g_i, I_i=I_i, P_i=P_i,
+                        status="ACCEPT", reason="SYNC_ACCUMULATE",
+                    )
+                    return {
+                        "status": "ACCEPT",
+                        "reason": "SYNC_ACCUMULATE",
+                        "force_sync": None,
+                        "round": self.round_number,
+                        "I_i": I_i,
+                        "P_i": P_i,
+                    }
+            else:
+                # Asynchronous FedAvg
+                reg.last_update_time = t_now
+                self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="ACCEPT", reason="ASYNC_FEDAVG",
+                )
+                ret_val = {
+                    "status": "ACCEPT",
+                    "reason": "ASYNC_FEDAVG",
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+                self.update_counter += 1
+                self.round_number += 1
+                return ret_val
+
+        elif self.aggregation == "afl_unconstrained":
+            reg.last_update_time = t_now
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="ACCEPT", reason="UNCONSTRAINED_AFL",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "UNCONSTRAINED_AFL",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        elif self.aggregation == "static_delay_afl":
+            tau_max = self.config.get("static_tau_max", 5.0)
+            s_i = t_now - submission.tau
+            if s_i > tau_max:
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="REJECT", reason="STATIC_DELAY_EXCEEDED",
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": "STATIC_DELAY_EXCEEDED",
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+            reg.last_update_time = t_now
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="ACCEPT", reason="STATIC_DELAY_AFL",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "STATIC_DELAY_AFL",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        elif self.aggregation == "pure_cosine":
+            passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
+            if not passes_cosine:
+                # Fix: same cascade-prevention fix as in the bdsf_afl pipeline.
+                reg.last_update_time = t_now
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="REJECT", reason="SPATIAL_COSINE",
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": "SPATIAL_COSINE",
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+            reg.last_update_time = t_now
+            delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * delta_W_clipped
+            entry = AcceptedEntry(
+                delta_W=delta_W_clipped.clone(),
+                I_score=1.0,
+                P_score=1.0,
+            )
+            self.accepted_buffer.append(entry)
+            self.spatial_validator.on_accept(entry)
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=1.0, P_i=1.0,
+                status="ACCEPT", reason="PURE_COSINE",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "PURE_COSINE",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": 1.0,
+                "P_i": 1.0,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        elif self.aggregation == "foolsgold":
+            self.grad_history[cid].append(submission.delta_W.clone())
+            summed_hist = {}
+            for c_id in self.client_ids:
+                if self.grad_history[c_id]:
+                    summed_hist[c_id] = torch.stack(self.grad_history[c_id]).sum(dim=0)
+                else:
+                    summed_hist[c_id] = torch.zeros_like(submission.delta_W)
+            v_i = summed_hist[cid]
+            norm_i = torch.norm(v_i).item()
+            contrib_sim = 0.0
+            if norm_i > 1e-9:
+                for other_id in self.client_ids:
+                    if other_id == cid:
+                        continue
+                    v_j = summed_hist[other_id]
+                    norm_j = torch.norm(v_j).item()
+                    if norm_j > 1e-9:
+                        sim = torch.dot(v_i, v_j).item() / (norm_i * norm_j)
+                        contrib_sim = max(contrib_sim, sim)
+            multiplier = max(0.0, min(1.0, 1.0 - contrib_sim))
+            reg.last_update_time = t_now
+            self.W_global = self.W_global + self.config.get("eta", 0.01) * multiplier * submission.delta_W
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=multiplier, P_i=1.0,
+                status="ACCEPT", reason="FOOLSGOLD",
+            )
+            ret_val = {
+                "status": "ACCEPT",
+                "reason": "FOOLSGOLD",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": multiplier,
+                "P_i": 1.0,
+            }
+            self.update_counter += 1
+            self.round_number += 1
+            return ret_val
+
+        # --- BDSF-AFL Proposed Pipeline (Step 1-12) ---
+        # --- Step 1: Compute behavioral gap g_i ---
+        # --- Step 3: Run temporal gate ---
+        temporal_result = self.temporal_filter.evaluate(g_i)
+
+        # --- Step 4: Handle REJECT_HIGH_FREQ ---
+        if temporal_result == "REJECT_HIGH_FREQ":
+            self.rep_manager.reduce_pace(cid)
+            I_i, P_i = self.rep_manager.get(cid)
+            # Fix (Livelock): Do not reset last_update_time on high-frequency rejection.
+            # Letting the gap accumulate prevents the client from being trapped in a loop.
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="REJECT", reason="TEMPORAL_HIGH_FREQ",
+            )
+            return {
+                "status": "REJECT",
+                "reason": "TEMPORAL_HIGH_FREQ",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+
+        # --- Step 5: Handle REJECT_STRAGGLER ---
+        if temporal_result == "REJECT_STRAGGLER":
+            self.rep_manager.reduce_pace(cid)
+            I_i, P_i = self.rep_manager.get(cid)
+            fs_payload = self.force_sync_dispatcher.build_payload(
+                cid, self.W_global, reg.session_key, self.get_virtual_time()
+            )
+            # Fix: synchronise the server-side timeline with the force_sync
+            # timestamp we are about to send to the client.  Without this,
+            # every subsequent g_i is measured from the stale T_prev and
+            # always exceeds U, trapping the client in a permanent
+            # reject → force-sync → reject livelock.
+            reg.last_update_time = fs_payload.timestamp
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="REJECT", reason="TEMPORAL_STRAGGLER",
+            )
+            return {
+                "status": "REJECT",
+                "reason": "TEMPORAL_STRAGGLER",
+                "force_sync": fs_payload,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+
+        # --- Step 7: Spatial cosine check ---
+        passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
+        if not passes_cosine:
+            # Spatial Grace Counter: Increment streak and slash only if streak >= grace limit
+            self.rep_manager.record_spatial_rejection(cid)
+            I_i, P_i = self.rep_manager.get(cid)
+            # Fix: advance last_update_time so the next submission's g_i is
+            # measured from t_now (≈ one training round) rather than from the
+            # previous accepted update.  Without this, repeated spatial
+            # rejections accumulate gap until g_i > U, cascading into the
+            # permanent TEMPORAL_STRAGGLER livelock.
+            reg.last_update_time = t_now
+            self.logger.log_update(
+                round=self.round_number, client_id=cid,
+                g_i=g_i, I_i=I_i, P_i=P_i,
+                status="REJECT", reason="SPATIAL_COSINE",
+            )
+            return {
+                "status": "REJECT",
+                "reason": "SPATIAL_COSINE",
+                "force_sync": None,
+                "round": self.round_number,
+                "I_i": I_i,
+                "P_i": P_i,
+            }
+
+        # --- Step 8: Adaptive L2 clipping ---
+        delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
+
+        # --- Step 9: Reputation-weighted merge ---
+        eta = self.config.get("eta", 0.01)
+        weight = I_i * P_i
+        self.W_global = self.W_global + eta * weight * delta_W_clipped
+
+        # --- Step 10: Append to accepted_buffer ---
+        entry = AcceptedEntry(
+            delta_W=delta_W_clipped.clone(),
+            I_score=I_i,
+            P_score=P_i,
+        )
+        self.accepted_buffer.append(entry)
+        self.spatial_validator.on_accept(entry)
+
+        # --- Step 11: Reputation recovery ---
+        # Borderline Suspicion Counter: Perform suspicion check on the exposed cosine similarity
+        sim = self.spatial_validator.last_sim
+        self.rep_manager.record_borderline_check(cid, sim)
+        # Spatial Grace Counter: Reset the rejection streak since update is fully accepted
+        self.rep_manager.record_accepted_update(cid)
+        # Perform normal recovery
+        self.rep_manager.recover(cid)
+        # Retrieve final scores after checking borderline/grace conditions
+        I_i, P_i = self.rep_manager.get(cid)
+
+        # --- Step 12: Log and return under current round, then increment ---
+        reg.last_update_time = t_now
+        self.logger.log_update(
+            round=self.round_number, client_id=cid,
+            g_i=g_i, I_i=I_i, P_i=P_i,
+            status="ACCEPT", reason="FULL_ACCEPT",
+        )
+        ret_val = {
+            "status": "ACCEPT",
+            "reason": "FULL_ACCEPT",
+            "force_sync": None,
+            "round": self.round_number,
+            "I_i": I_i,
+            "P_i": P_i,
+        }
+        self.update_counter += 1
+        self.round_number += 1
+        return ret_val
+
+    # ------------------------------------------------------------------
+    # Auxiliary public methods
+    # ------------------------------------------------------------------
+
+    def get_global_weights(self) -> torch.Tensor:
+        """Returns a clone of the current global model weights."""
+        return self.W_global.clone()
+
+    def register_client_ground_truth(
+        self, client_id: int, is_byzantine: bool,
+    ) -> None:
+        """Called by SimulationEnvironment after construction.
+        Sets the ground truth label used only by metrics/logger."""
+        self.registry[client_id].is_byzantine = is_byzantine
+
+    def get_session_key(self, client_id: int) -> bytes:
+        """Returns the HMAC session key for a given client.
+        Called by SimulationEnvironment to initialise each ClientNode."""
+        return self.registry[client_id].session_key
+
+    def update_pull_time(self, client_id: int, pull_time: float) -> None:
+        """Called when a client pulls W_global. Stores the pull timestamp."""
+        self.registry[client_id].pull_time = pull_time
+
+    def get_virtual_time(self) -> float:
+        """Returns the current virtual timeline time (excluding blocking evaluation periods)."""
+        return time.time() - self.total_eval_time
+
+    def accumulate_eval_time(self, duration: float) -> None:
+        """Accrues CPU execution time spent on blocking evaluations."""
+        self.total_eval_time += duration
