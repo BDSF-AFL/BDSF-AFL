@@ -266,13 +266,6 @@ class SimulationEnvironment:
         # Primary device for server-side ops (eval, aggregation weight vectors)
         device       = resolve_device(self.config)  # resolves and stores primary device in config
 
-        # Compile model for eval if torch.compile is available (PyTorch 2+)
-        if hasattr(torch, "compile") and str(device).startswith("cuda"):
-            try:
-                model = torch.compile(model, mode="reduce-overhead")
-            except Exception:
-                pass  # torch.compile not supported on this platform
-
         # Total accepted updates to process (re-interprets total_rounds as per-client rounds)
         total_updates      = total_rounds * N
         # Evaluate accuracy every eval_every "effective global rounds" worth of updates
