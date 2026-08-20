@@ -362,7 +362,19 @@ class SimulationEnvironment:
 
         # Run the true-async loop
         try:
-            asyncio.run(run_loop())
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+
+            if running_loop is not None and running_loop.is_running():
+                # Running inside Jupyter / IPython / Kaggle notebook kernel
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(asyncio.run, run_loop())
+                    future.result()
+            else:
+                asyncio.run(run_loop())
         finally:
             if pool is not None:
                 pool.shutdown(wait=True)
