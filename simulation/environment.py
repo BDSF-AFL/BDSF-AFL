@@ -369,7 +369,6 @@ class SimulationEnvironment:
 
             if running_loop is not None and running_loop.is_running():
                 # Running inside Jupyter / IPython / Kaggle notebook kernel
-                import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(asyncio.run, run_loop())
                     future.result()
