@@ -12,6 +12,9 @@ from server.temporal_filter import TemporalFilter
 from server.force_sync import ForceSyncDispatcher
 from server.reputation_manager import ReputationManager
 from server.spatial_validator import SpatialValidator
+from server.behavioral_memory import BehavioralMemoryManager
+from server.decision_engine import JointDecisionEngine
+from server.quarantine_manager import QuarantineManager
 from utils.logger import BDSFLogger
 
 
@@ -65,6 +68,14 @@ class AggregatorServer:
 
         # Step 10: Instantiate spatial validator
         self.spatial_validator = SpatialValidator(config)
+
+        # Step 10b: Instantiate behavioral memory manager (Phase 2)
+        self.behavioral_memory = BehavioralMemoryManager(config)
+
+        # Step 10c: Instantiate Phase 3 Joint Decision Engine & Quarantine Manager
+        self.decision_mode: str = config.get("decision_mode", "joint")
+        self.decision_engine = JointDecisionEngine(config)
+        self.quarantine_manager = QuarantineManager(config)
 
         # Step 11: Accepted buffer (shared concept with SpatialValidator)
         self.accepted_buffer: deque[AcceptedEntry] = deque(maxlen=M)
@@ -230,6 +241,7 @@ class AggregatorServer:
 
         elif self.aggregation == "pure_cosine":
             passes_cosine = self.spatial_validator.cosine_check(submission.delta_W)
+            spat_ev = self.spatial_validator.extract_evidence(submission.delta_W)
             if not passes_cosine:
                 # Fix: same cascade-prevention fix as in the bdsf_afl pipeline.
                 reg.last_update_time = t_now
@@ -237,6 +249,9 @@ class AggregatorServer:
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="REJECT", reason="SPATIAL_COSINE",
+                    sim_global=spat_ev.sim_global,
+                    norm_ratio=spat_ev.norm_ratio_median,
+                    weight=0.0, action="REJECT",
                 )
                 return {
                     "status": "REJECT",
@@ -253,6 +268,7 @@ class AggregatorServer:
                 delta_W=delta_W_clipped.clone(),
                 I_score=1.0,
                 P_score=1.0,
+                client_id=cid,
             )
             self.accepted_buffer.append(entry)
             self.spatial_validator.on_accept(entry)
@@ -260,6 +276,9 @@ class AggregatorServer:
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=1.0, P_i=1.0,
                 status="ACCEPT", reason="PURE_COSINE",
+                sim_global=spat_ev.sim_global,
+                norm_ratio=spat_ev.norm_ratio_median,
+                weight=1.0, action="ACCEPT",
             )
             ret_val = {
                 "status": "ACCEPT",
@@ -314,9 +333,302 @@ class AggregatorServer:
             return ret_val
 
         # --- BDSF-AFL Proposed Pipeline (Step 1-12) ---
+        if self.decision_mode == "joint":
+            self.temporal_filter.step_seen()
+
+        # --- Evidence Extraction (Observability Layer) ---
+        temporal_evidence = self.temporal_filter.extract_evidence(g_i, cid)
+        spatial_evidence = self.spatial_validator.extract_evidence(submission.delta_W)
+        client_gaps = self.temporal_filter.client_gap_history.get(cid, [])
+        behavioral_evidence = self.behavioral_memory.extract_evidence(
+            client_id=cid,
+            delta_W=submission.delta_W,
+            g_i=g_i,
+            client_gap_history=client_gaps,
+        )
+
+        # --------------------------------------------------------------
+        # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
+        # --------------------------------------------------------------
+        if self.decision_mode == "joint":
+            outcome = self.decision_engine.evaluate(
+                cid=cid,
+                temporal_ev=temporal_evidence,
+                spatial_ev=spatial_evidence,
+                behavioral_ev=behavioral_evidence,
+                I_i=I_i,
+                P_i=P_i,
+            )
+
+            delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
+            eta = self.config.get("eta", 0.01)
+
+            # 1. Handle ACCEPT Action (Full Consensus / Warm-Up)
+            if outcome.action == "ACCEPT":
+                weight = outcome.aggregation_weight
+                self.W_global = self.W_global + eta * weight * delta_W_clipped
+
+                entry = AcceptedEntry(
+                    delta_W=delta_W_clipped.clone(),
+                    I_score=I_i,
+                    P_score=P_i,
+                    client_id=cid,
+                )
+                self.accepted_buffer.append(entry)
+                self.spatial_validator.on_accept(entry)
+                self.temporal_filter.record_gap(g_i, cid)
+
+                # Option A Strict Warmup Isolation:
+                # SPATIAL_WARMUP_ACCEPT updates global model & spatial buffer,
+                # but skips behavioral memory insertion and reputation recovery.
+                is_warmup = (outcome.primary_reason in ["SPATIAL_WARMUP_ACCEPT", "BURN_IN_ACCEPT"])
+                if not is_warmup:
+                    self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False)
+                    self.rep_manager.record_accepted_update(cid)
+                    self.rep_manager.recover(cid)
+
+                I_i, P_i = self.rep_manager.get(cid)
+                reg.last_update_time = t_now
+
+                # Re-evaluate any pending quarantined updates against fresh reference
+                resolved_q = self.quarantine_manager.re_evaluate_pending(
+                    self.round_number, self.spatial_validator._build_reference(), self.decision_engine.theta_cos
+                )
+                for q_entry, q_act, q_age_mult in resolved_q:
+                    if q_act == "ACCEPT":
+                        q_w = q_age_mult * (q_entry.reputation_at_entry[0] * q_entry.reputation_at_entry[1])
+                        self.W_global = self.W_global + eta * q_w * q_entry.delta_W_clipped
+                        self.logger.log_update(
+                            round=self.round_number, client_id=q_entry.client_id,
+                            status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
+                            weight=q_w, action="ACCEPT",
+                            quarantine_depth=self.quarantine_manager.depth,
+                        )
+                    elif q_act == "REJECT":
+                        self.logger.log_update(
+                            round=self.round_number, client_id=q_entry.client_id,
+                            status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
+                            weight=None, action="REJECT",
+                            quarantine_depth=self.quarantine_manager.depth,
+                        )
+
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="ACCEPT", reason=outcome.primary_reason,
+                    lower_fence=temporal_evidence.lower_fence,
+                    upper_fence=temporal_evidence.upper_fence,
+                    fence_margin=temporal_evidence.fence_margin,
+                    client_z_score=temporal_evidence.client_z_score,
+                    is_burn_in=temporal_evidence.is_burn_in,
+                    spatial_mature=spatial_evidence.spatial_mature,
+                    temporal_mature=temporal_evidence.temporal_mature,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
+                    spatial_ref_count=spatial_evidence.spatial_reference_count,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    sim_global=spatial_evidence.sim_global,
+                    norm_raw=spatial_evidence.norm_raw,
+                    norm_clipped=spatial_evidence.norm_clipped,
+                    norm_ratio_median=spatial_evidence.norm_ratio_median,
+                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                    reference_available=spatial_evidence.reference_available,
+                    weight=weight, action="ACCEPT",
+                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    sim_self_max=behavioral_evidence.sim_self_max,
+                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                    cadence_consistency=behavioral_evidence.cadence_consistency,
+                    history_depth=behavioral_evidence.history_depth,
+                    sim_anchor=behavioral_evidence.sim_anchor,
+                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    quarantine_depth=self.quarantine_manager.depth,
+                )
+                ret_val = {
+                    "status": "ACCEPT",
+                    "reason": outcome.primary_reason,
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+                self.update_counter += 1
+                self.round_number += 1
+                return ret_val
+
+            # 2. Handle DOWNWEIGHT Action (Non-IID Honest Soft-Filtering)
+            elif outcome.action == "DOWNWEIGHT":
+                weight = outcome.aggregation_weight
+                self.W_global = self.W_global + eta * weight * delta_W_clipped
+
+                entry = AcceptedEntry(
+                    delta_W=delta_W_clipped.clone(),
+                    I_score=I_i,
+                    P_score=P_i,
+                    client_id=cid,
+                )
+                self.accepted_buffer.append(entry)
+                self.spatial_validator.on_accept(entry)
+                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True)
+                self.temporal_filter.record_gap(g_i, cid)
+
+                # Neutral Hold: Reset spatial rejection streak, no integrity slash, no additive recovery
+                self.rep_manager.record_accepted_update(cid)
+                I_i, P_i = self.rep_manager.get(cid)
+                reg.last_update_time = t_now
+
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="DOWNWEIGHT", reason=outcome.primary_reason,
+                    lower_fence=temporal_evidence.lower_fence,
+                    upper_fence=temporal_evidence.upper_fence,
+                    fence_margin=temporal_evidence.fence_margin,
+                    client_z_score=temporal_evidence.client_z_score,
+                    is_burn_in=temporal_evidence.is_burn_in,
+                    spatial_mature=spatial_evidence.spatial_mature,
+                    temporal_mature=temporal_evidence.temporal_mature,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
+                    spatial_ref_count=spatial_evidence.spatial_reference_count,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    sim_global=spatial_evidence.sim_global,
+                    norm_raw=spatial_evidence.norm_raw,
+                    norm_clipped=spatial_evidence.norm_clipped,
+                    norm_ratio_median=spatial_evidence.norm_ratio_median,
+                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                    reference_available=spatial_evidence.reference_available,
+                    weight=weight, action="DOWNWEIGHT",
+                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    sim_self_max=behavioral_evidence.sim_self_max,
+                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                    cadence_consistency=behavioral_evidence.cadence_consistency,
+                    history_depth=behavioral_evidence.history_depth,
+                    sim_anchor=behavioral_evidence.sim_anchor,
+                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    quarantine_depth=self.quarantine_manager.depth,
+                )
+                ret_val = {
+                    "status": "DOWNWEIGHT",
+                    "reason": outcome.primary_reason,
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+                self.update_counter += 1
+                self.round_number += 1
+                return ret_val
+
+            # 3. Handle QUARANTINE Action (Ambiguous / Borderline Evidence)
+            elif outcome.action == "QUARANTINE":
+                self.quarantine_manager.enqueue(
+                    client_id=cid,
+                    delta_W_clipped=delta_W_clipped,
+                    current_round=self.round_number,
+                    virtual_time=t_now,
+                    reputation=(I_i, P_i),
+                    reason=outcome.primary_reason,
+                )
+                reg.last_update_time = t_now
+
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="QUARANTINE", reason=outcome.primary_reason,
+                    lower_fence=temporal_evidence.lower_fence,
+                    upper_fence=temporal_evidence.upper_fence,
+                    fence_margin=temporal_evidence.fence_margin,
+                    client_z_score=temporal_evidence.client_z_score,
+                    is_burn_in=temporal_evidence.is_burn_in,
+                    spatial_mature=spatial_evidence.spatial_mature,
+                    temporal_mature=temporal_evidence.temporal_mature,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
+                    spatial_ref_count=spatial_evidence.spatial_reference_count,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    sim_global=spatial_evidence.sim_global,
+                    norm_raw=spatial_evidence.norm_raw,
+                    norm_clipped=spatial_evidence.norm_clipped,
+                    norm_ratio_median=spatial_evidence.norm_ratio_median,
+                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                    reference_available=spatial_evidence.reference_available,
+                    weight=0.0, action="QUARANTINE",
+                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    sim_self_max=behavioral_evidence.sim_self_max,
+                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                    cadence_consistency=behavioral_evidence.cadence_consistency,
+                    history_depth=behavioral_evidence.history_depth,
+                    sim_anchor=behavioral_evidence.sim_anchor,
+                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    quarantine_depth=self.quarantine_manager.depth,
+                )
+                return {
+                    "status": "QUARANTINE",
+                    "reason": outcome.primary_reason,
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+
+            # 4. Handle REJECT Action (Hard Violations / Adversarial Fallthrough)
+            else:
+                fs_payload = None
+                if outcome.force_sync_required or outcome.primary_reason == "HARD_GUARD_TEMPORAL_STRAGGLER":
+                    self.rep_manager.reduce_pace(cid)
+                    fs_payload = self.force_sync_dispatcher.build_payload(
+                        cid, self.W_global, reg.session_key, self.get_virtual_time()
+                    )
+                    reg.last_update_time = fs_payload.timestamp
+                elif outcome.primary_reason == "HARD_GUARD_TEMPORAL_SPAM":
+                    self.rep_manager.reduce_pace(cid)
+                else:
+                    self.rep_manager.record_spatial_rejection(cid)
+                    reg.last_update_time = t_now
+
+                I_i, P_i = self.rep_manager.get(cid)
+                self.logger.log_update(
+                    round=self.round_number, client_id=cid,
+                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    status="REJECT", reason=outcome.primary_reason,
+                    lower_fence=temporal_evidence.lower_fence,
+                    upper_fence=temporal_evidence.upper_fence,
+                    fence_margin=temporal_evidence.fence_margin,
+                    client_z_score=temporal_evidence.client_z_score,
+                    is_burn_in=temporal_evidence.is_burn_in,
+                    spatial_mature=spatial_evidence.spatial_mature,
+                    temporal_mature=temporal_evidence.temporal_mature,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
+                    spatial_ref_count=spatial_evidence.spatial_reference_count,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    sim_global=spatial_evidence.sim_global,
+                    norm_raw=spatial_evidence.norm_raw,
+                    norm_clipped=spatial_evidence.norm_clipped,
+                    norm_ratio_median=spatial_evidence.norm_ratio_median,
+                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                    reference_available=spatial_evidence.reference_available,
+                    weight=None, action="REJECT",
+                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    sim_self_max=behavioral_evidence.sim_self_max,
+                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                    cadence_consistency=behavioral_evidence.cadence_consistency,
+                    history_depth=behavioral_evidence.history_depth,
+                    sim_anchor=behavioral_evidence.sim_anchor,
+                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    quarantine_depth=self.quarantine_manager.depth,
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": outcome.primary_reason,
+                    "force_sync": fs_payload,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+
+        # --------------------------------------------------------------
+        # LEGACY BDSF-AFL PIPELINE (when decision_mode == "legacy")
+        # --------------------------------------------------------------
         # --- Step 1: Compute behavioral gap g_i ---
         # --- Step 3: Run temporal gate ---
-        temporal_result = self.temporal_filter.evaluate(g_i)
+        temporal_result = self.temporal_filter.evaluate(g_i, cid)
 
         # --- Step 4: Handle REJECT_HIGH_FREQ ---
         if temporal_result == "REJECT_HIGH_FREQ":
@@ -328,6 +640,31 @@ class AggregatorServer:
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="TEMPORAL_HIGH_FREQ",
+                lower_fence=temporal_evidence.lower_fence,
+                upper_fence=temporal_evidence.upper_fence,
+                fence_margin=temporal_evidence.fence_margin,
+                client_z_score=temporal_evidence.client_z_score,
+                is_burn_in=temporal_evidence.is_burn_in,
+                spatial_mature=spatial_evidence.spatial_mature,
+                temporal_mature=temporal_evidence.temporal_mature,
+                behavioral_mature=behavioral_evidence.behavioral_mature,
+                spatial_ref_count=spatial_evidence.spatial_reference_count,
+                spatial_coherence=spatial_evidence.spatial_coherence,
+                sim_global=spatial_evidence.sim_global,
+                norm_raw=spatial_evidence.norm_raw,
+                norm_clipped=spatial_evidence.norm_clipped,
+                norm_ratio_median=spatial_evidence.norm_ratio_median,
+                dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                reference_available=spatial_evidence.reference_available,
+                weight=None, action="REJECT",
+                sim_self_mean=behavioral_evidence.sim_self_mean,
+                sim_self_max=behavioral_evidence.sim_self_max,
+                norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                cadence_consistency=behavioral_evidence.cadence_consistency,
+                history_depth=behavioral_evidence.history_depth,
+                sim_anchor=behavioral_evidence.sim_anchor,
+                consecutive_dw=behavioral_evidence.consecutive_dw,
+                quarantine_depth=self.quarantine_manager.depth,
             )
             return {
                 "status": "REJECT",
@@ -355,6 +692,31 @@ class AggregatorServer:
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="TEMPORAL_STRAGGLER",
+                lower_fence=temporal_evidence.lower_fence,
+                upper_fence=temporal_evidence.upper_fence,
+                fence_margin=temporal_evidence.fence_margin,
+                client_z_score=temporal_evidence.client_z_score,
+                is_burn_in=temporal_evidence.is_burn_in,
+                spatial_mature=spatial_evidence.spatial_mature,
+                temporal_mature=temporal_evidence.temporal_mature,
+                behavioral_mature=behavioral_evidence.behavioral_mature,
+                spatial_ref_count=spatial_evidence.spatial_reference_count,
+                spatial_coherence=spatial_evidence.spatial_coherence,
+                sim_global=spatial_evidence.sim_global,
+                norm_raw=spatial_evidence.norm_raw,
+                norm_clipped=spatial_evidence.norm_clipped,
+                norm_ratio_median=spatial_evidence.norm_ratio_median,
+                dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                reference_available=spatial_evidence.reference_available,
+                weight=None, action="REJECT",
+                sim_self_mean=behavioral_evidence.sim_self_mean,
+                sim_self_max=behavioral_evidence.sim_self_max,
+                norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                cadence_consistency=behavioral_evidence.cadence_consistency,
+                history_depth=behavioral_evidence.history_depth,
+                sim_anchor=behavioral_evidence.sim_anchor,
+                consecutive_dw=behavioral_evidence.consecutive_dw,
+                quarantine_depth=self.quarantine_manager.depth,
             )
             return {
                 "status": "REJECT",
@@ -381,6 +743,31 @@ class AggregatorServer:
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="SPATIAL_COSINE",
+                lower_fence=temporal_evidence.lower_fence,
+                upper_fence=temporal_evidence.upper_fence,
+                fence_margin=temporal_evidence.fence_margin,
+                client_z_score=temporal_evidence.client_z_score,
+                is_burn_in=temporal_evidence.is_burn_in,
+                spatial_mature=spatial_evidence.spatial_mature,
+                temporal_mature=temporal_evidence.temporal_mature,
+                behavioral_mature=behavioral_evidence.behavioral_mature,
+                spatial_ref_count=spatial_evidence.spatial_reference_count,
+                spatial_coherence=spatial_evidence.spatial_coherence,
+                sim_global=spatial_evidence.sim_global,
+                norm_raw=spatial_evidence.norm_raw,
+                norm_clipped=spatial_evidence.norm_clipped,
+                norm_ratio_median=spatial_evidence.norm_ratio_median,
+                dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+                reference_available=spatial_evidence.reference_available,
+                weight=None, action="REJECT",
+                sim_self_mean=behavioral_evidence.sim_self_mean,
+                sim_self_max=behavioral_evidence.sim_self_max,
+                norm_deviation_self=behavioral_evidence.norm_deviation_self,
+                cadence_consistency=behavioral_evidence.cadence_consistency,
+                history_depth=behavioral_evidence.history_depth,
+                sim_anchor=behavioral_evidence.sim_anchor,
+                consecutive_dw=behavioral_evidence.consecutive_dw,
+                quarantine_depth=self.quarantine_manager.depth,
             )
             return {
                 "status": "REJECT",
@@ -399,14 +786,16 @@ class AggregatorServer:
         weight = I_i * P_i
         self.W_global = self.W_global + eta * weight * delta_W_clipped
 
-        # --- Step 10: Append to accepted_buffer ---
+        # --- Step 10: Append to accepted_buffer & behavioral memory ---
         entry = AcceptedEntry(
             delta_W=delta_W_clipped.clone(),
             I_score=I_i,
             P_score=P_i,
+            client_id=cid,
         )
         self.accepted_buffer.append(entry)
         self.spatial_validator.on_accept(entry)
+        self.behavioral_memory.on_accept(cid, delta_W_clipped)
 
         # --- Step 11: Reputation recovery ---
         # Borderline Suspicion Counter: Perform suspicion check on the exposed cosine similarity
@@ -425,6 +814,31 @@ class AggregatorServer:
             round=self.round_number, client_id=cid,
             g_i=g_i, I_i=I_i, P_i=P_i,
             status="ACCEPT", reason="FULL_ACCEPT",
+            lower_fence=temporal_evidence.lower_fence,
+            upper_fence=temporal_evidence.upper_fence,
+            fence_margin=temporal_evidence.fence_margin,
+            client_z_score=temporal_evidence.client_z_score,
+            is_burn_in=temporal_evidence.is_burn_in,
+            spatial_mature=spatial_evidence.spatial_mature,
+            temporal_mature=temporal_evidence.temporal_mature,
+            behavioral_mature=behavioral_evidence.behavioral_mature,
+            spatial_ref_count=spatial_evidence.spatial_reference_count,
+            spatial_coherence=spatial_evidence.spatial_coherence,
+            sim_global=spatial_evidence.sim_global,
+            norm_raw=spatial_evidence.norm_raw,
+            norm_clipped=spatial_evidence.norm_clipped,
+            norm_ratio_median=spatial_evidence.norm_ratio_median,
+            dynamic_bound_C=spatial_evidence.dynamic_bound_C,
+            reference_available=spatial_evidence.reference_available,
+            weight=weight, action="ACCEPT",
+            sim_self_mean=behavioral_evidence.sim_self_mean,
+            sim_self_max=behavioral_evidence.sim_self_max,
+            norm_deviation_self=behavioral_evidence.norm_deviation_self,
+            cadence_consistency=behavioral_evidence.cadence_consistency,
+            history_depth=behavioral_evidence.history_depth,
+            sim_anchor=behavioral_evidence.sim_anchor,
+            consecutive_dw=behavioral_evidence.consecutive_dw,
+            quarantine_depth=self.quarantine_manager.depth,
         )
         ret_val = {
             "status": "ACCEPT",

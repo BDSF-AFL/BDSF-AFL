@@ -16,15 +16,41 @@ class BDSFLogger:
         # Setup CSV file for updates
         self.csv_path = os.path.join(self.log_dir, f"{run_id}_updates.csv")
         
-        # Write headers if file doesn't exist or is empty
-        if not os.path.exists(self.csv_path) or os.path.getsize(self.csv_path) == 0:
-            with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(["round", "client_id", "status", "reason", "g_i", "I_i", "P_i"])
+        # Fresh initialization: write headers immediately
+        with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "round", "client_id", "status", "reason",
+                "g_i", "I_i", "P_i",
+                "lower_fence", "upper_fence", "fence_margin", "client_z_score", "is_burn_in",
+                "spatial_mature", "temporal_mature", "behavioral_mature", "spatial_ref_count", "spatial_coherence",
+                "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
+                "weight", "action",
+                "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
+                "sim_anchor", "consecutive_dw", "quarantine_depth"
+            ])
+            f.flush()
 
     def log_update(self, *, round: int, client_id: int, status: str, reason: str, 
-                   g_i: Optional[float] = None, I_i: Optional[float] = None, P_i: Optional[float] = None) -> None:
+                   g_i: Optional[float] = None, I_i: Optional[float] = None, P_i: Optional[float] = None,
+                   lower_fence: Optional[float] = None, upper_fence: Optional[float] = None,
+                   fence_margin: Optional[float] = None, client_z_score: Optional[float] = None,
+                   is_burn_in: Optional[bool] = None,
+                   spatial_mature: Optional[bool] = None, temporal_mature: Optional[bool] = None,
+                   behavioral_mature: Optional[bool] = None, spatial_ref_count: Optional[int] = None,
+                   spatial_coherence: Optional[float] = None,
+                   sim_global: Optional[float] = None,
+                   norm_raw: Optional[float] = None, norm_clipped: Optional[float] = None,
+                   norm_ratio_median: Optional[float] = None, dynamic_bound_C: Optional[float] = None,
+                   reference_available: Optional[bool] = None, weight: Optional[float] = None,
+                   action: Optional[str] = None,
+                   sim_self_mean: Optional[float] = None, sim_self_max: Optional[float] = None,
+                   norm_deviation_self: Optional[float] = None, cadence_consistency: Optional[float] = None,
+                   history_depth: Optional[int] = None,
+                   sim_anchor: Optional[float] = None, consecutive_dw: Optional[int] = None,
+                   quarantine_depth: Optional[int] = None) -> None:
         """Log update status and metadata. Appends to list and CSV."""
+        act_val = action if action is not None else status
         entry = {
             "round": round,
             "client_id": client_id,
@@ -32,7 +58,33 @@ class BDSFLogger:
             "reason": reason,
             "g_i": g_i,
             "I_i": I_i,
-            "P_i": P_i
+            "P_i": P_i,
+            "lower_fence": lower_fence,
+            "upper_fence": upper_fence,
+            "fence_margin": fence_margin,
+            "client_z_score": client_z_score,
+            "is_burn_in": is_burn_in,
+            "spatial_mature": spatial_mature,
+            "temporal_mature": temporal_mature,
+            "behavioral_mature": behavioral_mature,
+            "spatial_ref_count": spatial_ref_count,
+            "spatial_coherence": spatial_coherence,
+            "sim_global": sim_global,
+            "norm_raw": norm_raw,
+            "norm_clipped": norm_clipped,
+            "norm_ratio_median": norm_ratio_median,
+            "dynamic_bound_C": dynamic_bound_C,
+            "reference_available": reference_available,
+            "weight": weight,
+            "action": act_val,
+            "sim_self_mean": sim_self_mean,
+            "sim_self_max": sim_self_max,
+            "norm_deviation_self": norm_deviation_self,
+            "cadence_consistency": cadence_consistency,
+            "history_depth": history_depth,
+            "sim_anchor": sim_anchor,
+            "consecutive_dw": consecutive_dw,
+            "quarantine_depth": quarantine_depth,
         }
         self._rejection_log.append(entry)
         
@@ -40,10 +92,45 @@ class BDSFLogger:
         g_val = f"{g_i:.6f}" if g_i is not None else ""
         I_val = f"{I_i:.6f}" if I_i is not None else ""
         P_val = f"{P_i:.6f}" if P_i is not None else ""
+        lf_val = f"{lower_fence:.6f}" if lower_fence is not None else ""
+        uf_val = f"{upper_fence:.6f}" if upper_fence is not None else ""
+        fm_val = f"{fence_margin:.6f}" if fence_margin is not None else ""
+        cz_val = f"{client_z_score:.6f}" if client_z_score is not None else ""
+        bi_val = str(is_burn_in) if is_burn_in is not None else ""
+        sp_m_val = str(spatial_mature) if spatial_mature is not None else ""
+        tm_m_val = str(temporal_mature) if temporal_mature is not None else ""
+        bm_m_val = str(behavioral_mature) if behavioral_mature is not None else ""
+        src_val = str(spatial_ref_count) if spatial_ref_count is not None else ""
+        sc_val = f"{spatial_coherence:.6f}" if spatial_coherence is not None else ""
+        sim_g_val = f"{sim_global:.6f}" if sim_global is not None else ""
+        nr_val = f"{norm_raw:.6f}" if norm_raw is not None else ""
+        nc_val = f"{norm_clipped:.6f}" if norm_clipped is not None else ""
+        nrm_val = f"{norm_ratio_median:.6f}" if norm_ratio_median is not None else ""
+        dbc_val = f"{dynamic_bound_C:.6f}" if dynamic_bound_C is not None else ""
+        ra_val = str(reference_available) if reference_available is not None else ""
+        w_val = f"{weight:.6f}" if weight is not None else ""
+        ss_mean_val = f"{sim_self_mean:.6f}" if sim_self_mean is not None else ""
+        ss_max_val = f"{sim_self_max:.6f}" if sim_self_max is not None else ""
+        nd_self_val = f"{norm_deviation_self:.6f}" if norm_deviation_self is not None else ""
+        cc_val = f"{cadence_consistency:.6f}" if cadence_consistency is not None else ""
+        hd_val = str(history_depth) if history_depth is not None else ""
+        sa_val = f"{sim_anchor:.6f}" if sim_anchor is not None else ""
+        cdw_val = str(consecutive_dw) if consecutive_dw is not None else ""
+        qd_val = str(quarantine_depth) if quarantine_depth is not None else ""
         
         with open(self.csv_path, mode='a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow([round, client_id, status, reason, g_val, I_val, P_val])
+            writer.writerow([
+                round, client_id, status, reason,
+                g_val, I_val, P_val,
+                lf_val, uf_val, fm_val, cz_val, bi_val,
+                sp_m_val, tm_m_val, bm_m_val, src_val, sc_val,
+                sim_g_val, nr_val, nc_val, nrm_val, dbc_val, ra_val,
+                w_val, act_val,
+                ss_mean_val, ss_max_val, nd_self_val, cc_val, hd_val,
+                sa_val, cdw_val, qd_val
+            ])
+            f.flush()
 
     def log_reputation(self, *, round: int, client_id: int, I_i: float, P_i: float, is_byzantine: bool) -> None:
         """Log client reputation metrics at a round."""

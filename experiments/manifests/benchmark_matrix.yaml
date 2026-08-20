@@ -1,0 +1,55 @@
+# BDSF-AFL Phase 4: Baseline Benchmark Experiment Manifest
+experiment:
+  name: "phase4_baseline_benchmarks"
+  dataset: "MNIST"
+  rounds: 50
+  batch_size: 64
+  local_epochs: 2
+  lr: 0.01
+  N_clients: 20
+  M: 20
+  K_base: 50
+  K_ref: 10
+
+  algorithms:
+    - "FedAvg"
+    - "FedProx"
+    - "Unconstrained_AFL"
+    - "Static_Delay_AFL"
+    - "Pure_Cosine_AFL"
+    - "FoolsGold_AFL"
+    - "Legacy_BDSF_AFL"
+    - "Proposed_BDSF_AFL"
+
+  heterogeneity:
+    - alpha: 0.1
+      label: "Extreme_NonIID"
+    - alpha: 0.5
+      label: "Moderate_NonIID"
+    - alpha: "iid"
+      label: "IID"
+
+  attacks:
+    - "NONE"
+    - "T1_HIGH_FREQ"
+    - "T2_STRAGGLER"
+    - "S1_POISON"
+    - "S2_MIMICRY"
+    - "ADAPTIVE"
+    - "COMPOUND"
+
+  byzantine_fractions:
+    - 0.0
+    - 0.1
+    - 0.2
+    - 0.3
+
+  seeds:
+    - 42
+    - 123
+    - 256
+    - 789
+    - 1001
+
+  target_accuracy: 0.85
+  log_dir: "logs/phase4_results/benchmarks/"

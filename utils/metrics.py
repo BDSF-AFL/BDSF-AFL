@@ -31,13 +31,13 @@ def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: 
     return correct / total if total > 0 else 0.0
 
 def compute_attack_success_rate(rejection_log: list[dict], byzantine_ids: set[int]) -> float:
-    byz_submissions = [r for r in rejection_log if r.get("client_id") in byzantine_ids]
+    byz_submissions = [r for r in rejection_log if r.get("client_id") in byzantine_ids and r.get("status") in ["ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT"]]
     if not byz_submissions: return 0.0
-    accepted = sum(1 for r in byz_submissions if r.get("status") == "ACCEPT")
+    accepted = sum(1 for r in byz_submissions if r.get("status") in ["ACCEPT", "DOWNWEIGHT"])
     return accepted / len(byz_submissions)
 
 def compute_false_rejection_rate(rejection_log: list[dict], honest_ids: set[int]) -> float:
-    honest_submissions = [r for r in rejection_log if r.get("client_id") in honest_ids]
+    honest_submissions = [r for r in rejection_log if r.get("client_id") in honest_ids and r.get("status") in ["ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT"]]
     if not honest_submissions: return 0.0
     rejected = sum(1 for r in honest_submissions if r.get("status") == "REJECT")
     return rejected / len(honest_submissions)
@@ -54,6 +54,44 @@ def compute_convergence_time(accuracy_log: list[float], target: float = 0.85) ->
         if acc >= target:
             return float(i)
     return float("inf")
+
+def compute_reputation_separation_auc(rep_manager, honest_ids: set[int], byzantine_ids: set[int]) -> float:
+    """Computes Area Under the Curve (AUC) measuring separation between honest and Byzantine integrity scores."""
+    if not byzantine_ids or not honest_ids:
+        return 1.0
+    
+    honest_scores = [rep_manager.get(cid)[0] for cid in honest_ids if cid in rep_manager.scores]
+    byz_scores = [rep_manager.get(cid)[0] for cid in byzantine_ids if cid in rep_manager.scores]
+    
+    if not honest_scores or not byz_scores:
+        return 1.0
+    
+    # Calculate Mann-Whitney U statistic: P(I_honest > I_byzantine)
+    n_pairs = 0
+    favorable = 0.0
+    for h in honest_scores:
+        for b in byz_scores:
+            n_pairs += 1
+            if h > b:
+                favorable += 1.0
+            elif abs(h - b) < 1e-9:
+                favorable += 0.5
+                
+    return favorable / n_pairs if n_pairs > 0 else 1.0
+
+def compute_reputation_means(rep_manager, honest_ids: set[int], byzantine_ids: set[int]) -> dict:
+    """Computes mean (I, P) scores for honest and Byzantine client groups."""
+    h_I = [rep_manager.get(cid)[0] for cid in honest_ids if cid in rep_manager.scores]
+    h_P = [rep_manager.get(cid)[1] for cid in honest_ids if cid in rep_manager.scores]
+    b_I = [rep_manager.get(cid)[0] for cid in byzantine_ids if cid in rep_manager.scores]
+    b_P = [rep_manager.get(cid)[1] for cid in byzantine_ids if cid in rep_manager.scores]
+    
+    return {
+        "final_I_mean_honest": float(np.mean(h_I)) if h_I else 1.0,
+        "final_P_mean_honest": float(np.mean(h_P)) if h_P else 1.0,
+        "final_I_mean_byzantine": float(np.mean(b_I)) if b_I else 0.0,
+        "final_P_mean_byzantine": float(np.mean(b_P)) if b_P else 0.0,
+    }
 
 def compute_comm_overhead_per_node(model_dim: int, include_hmac: bool = True) -> dict:
     gradient_bytes = model_dim * 4

@@ -189,7 +189,8 @@ class SimulationEnvironment:
         test_loader = partitioner.get_test_loader()
         
         # 3. Create Logger
-        run_id = f"{self.attack_type}_{self.seed}"
+        mode = self.config.get("decision_mode", "joint")
+        run_id = f"{mode}_{self.attack_type}_{self.seed}"
         logger = BDSFLogger(run_id=run_id, config=self.config)
         
         # 4. Construct AggregatorServer

@@ -26,7 +26,7 @@ class DataPartitioner:
         else:  # Default to CIFAR10
             self.transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
             ])
 
     def _resolve_data_dir(self, config: dict) -> str:
@@ -38,23 +38,40 @@ class DataPartitioner:
             if os.path.exists(configured_dir):
                 return configured_dir
 
-        candidates = [
-            "/kaggle/input/datasets/pankrzysiu/cifar10-python/cifar-10-batches-py",
-            "/kaggle/input/datasets/pankrzysiu/cifar10-python",
-            "/kaggle/input/cifar10-python/cifar-10-batches-py",
-            "/kaggle/input/cifar10-python",
-            "/kaggle/input/cifar10/cifar-10-batches-py",
-            "/kaggle/input/cifar10",
-            "./data/cifar-10-batches-py",
-            "./data"
-        ]
+        if self.dataset_name == "MNIST":
+            candidates = [
+                "/kaggle/input/mnist-dataset",
+                "/kaggle/input/mnist",
+                "/kaggle/input/mnist-data",
+                "/kaggle/input/digit-recognizer",
+                "./data/MNIST",
+                "./data"
+            ]
+        else:  # CIFAR10
+            candidates = [
+                "/kaggle/input/datasets/pankrzysiu/cifar10-python/cifar-10-batches-py",
+                "/kaggle/input/datasets/pankrzysiu/cifar10-python",
+                "/kaggle/input/cifar10-python/cifar-10-batches-py",
+                "/kaggle/input/cifar10-python",
+                "/kaggle/input/cifar10/cifar-10-batches-py",
+                "/kaggle/input/cifar10",
+                "./data/cifar-10-batches-py",
+                "./data"
+            ]
 
         for cand in candidates:
             if os.path.exists(cand):
                 if cand.endswith("cifar-10-batches-py"):
                     return os.path.dirname(cand)
-                if os.path.exists(os.path.join(cand, "cifar-10-batches-py")) or self.dataset_name != "CIFAR10":
-                    return cand
+                if self.dataset_name == "CIFAR10":
+                    if os.path.exists(os.path.join(cand, "cifar-10-batches-py")):
+                        return cand
+                elif self.dataset_name == "MNIST":
+                    if os.path.exists(os.path.join(cand, "MNIST")):
+                        return cand
+                    if cand.endswith("MNIST"):
+                        return os.path.dirname(cand)
+                return cand
 
         return configured_dir if configured_dir else "./data"
 

@@ -1,0 +1,115 @@
+# BDSF-AFL Phase 4: 7-Way Component Ablation Experiment Manifest
+experiment:
+  name: "phase4_ablation_matrix"
+  dataset: "MNIST"
+  rounds: 50
+  batch_size: 64
+  local_epochs: 2
+  lr: 0.01
+  N_clients: 20
+  M: 20
+  K_base: 50
+  K_ref: 10
+  dirichlet_alpha: 0.1
+  byz_fraction: 0.2
+  attack_type: "COMPOUND"
+
+  variants:
+    - code: "Abl-0"
+      name: "Full_BDSF_AFL"
+      description: "Full proposed BDSF-AFL with all state maturity and joint mechanisms active"
+      warm_start_mode: "state_maturity"
+      decision_mode: "joint"
+      enable_quarantine: true
+      enable_genesis_anchor: true
+      adaptive_clip_enabled: true
+      asymmetric_rep: true
+      warmup_weight_factor: 0.5
+
+    - code: "Abl-1"
+      name: "Remove_State_Maturity"
+      description: "Fixed N_burn=80 burn-in instead of dynamic state maturity gating"
+      warm_start_mode: "fixed_burn_in"
+      burn_in_count: 80
+      decision_mode: "joint"
+      enable_quarantine: true
+      enable_genesis_anchor: true
+      adaptive_clip_enabled: true
+      asymmetric_rep: true
+      warmup_weight_factor: 0.5
+
+    - code: "Abl-2"
+      name: "Remove_Joint_Decision_Engine"
+      description: "Legacy sequential hard binary gates (Temporal -> Spatial -> Reputation)"
+      decision_mode: "legacy"
+      enable_quarantine: false
+      enable_genesis_anchor: false
+      adaptive_clip_enabled: true
+      asymmetric_rep: true
+
+    - code: "Abl-3"
+      name: "Remove_CPU_Quarantine"
+      description: "Ambiguous and borderline updates are immediately rejected without quarantine holding"
+      warm_start_mode: "state_maturity"
+      decision_mode: "joint"
+      enable_quarantine: false
+      enable_genesis_anchor: true
+      adaptive_clip_enabled: true
+      asymmetric_rep: true
+      warmup_weight_factor: 0.5
+
+    - code: "Abl-4"
+      name: "Remove_Genesis_Anchor"
+      description: "Flat rolling k-NN memory only; Genesis Anchor similarity disabled"
+      warm_start_mode: "state_maturity"
+      decision_mode: "joint"
+      enable_quarantine: true
+      enable_genesis_anchor: false
+      theta_anchor_min: -1.0
+      adaptive_clip_enabled: true
+      asymmetric_rep: true
+      warmup_weight_factor: 0.5
+
+    - code: "Abl-5"
+      name: "Remove_Adaptive_Clipping"
+      description: "Static norm clipping C=10.0 instead of dynamic MAD median threshold"
+      warm_start_mode: "state_maturity"
+      decision_mode: "joint"
+      enable_quarantine: true
+      enable_genesis_anchor: true
+      adaptive_clip_enabled: false
+      static_clip_C: 10.0
+      asymmetric_rep: true
+      warmup_weight_factor: 0.5
+
+    - code: "Abl-6"
+      name: "Remove_Asymmetric_Reputation"
+      description: "Symmetric additive and multiplicative reputation recovery (beta_I = beta_P)"
+      warm_start_mode: "state_maturity"
+      decision_mode: "joint"
+      enable_quarantine: true
+      enable_genesis_anchor: true
+      adaptive_clip_enabled: true
+      asymmetric_rep: false
+      warmup_weight_factor: 0.5
+
+    - code: "Abl-7"
+      name: "Remove_Warmup_Hardening"
+      description: "Unverified early warmup updates accepted with full weight and reputation recovery"
+      warm_start_mode: "state_maturity"
+      decision_mode: "joint"
+      enable_quarantine: true
+      enable_genesis_anchor: true
+      adaptive_clip_enabled: true
+      asymmetric_rep: true
+      warmup_weight_factor: 1.0
+
+  seeds:
+    - 42
+    - 123
+    - 256
+    - 789
+    - 1001
+
+  target_accuracy: 0.85
+  log_dir: "logs/phase4_results/ablations/"
