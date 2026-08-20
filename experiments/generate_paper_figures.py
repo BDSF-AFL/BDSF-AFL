@@ -13,6 +13,7 @@ Generates 7 publication-grade figures in PNG (300 DPI) and vector PDF formats:
 import sys
 import os
 import glob
+from typing import Optional, List, Dict, Any
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
