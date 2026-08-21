@@ -128,7 +128,8 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
         is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
-        is_temporal_valid = (not temporal_ev.temporal_mature or g_margin == 0.0)
+        # Tolerate minor inter-batch GPU/thread timing jitter (g_margin <= 0.20) when spatial & self agreement are strong
+        is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
 
         if is_spatial_valid and is_self_valid and is_temporal_valid:
             return JointDecisionOutcome(
@@ -140,9 +141,9 @@ class JointDecisionEngine:
             )
 
         # ---------------------------------------------------------------------
-        # PRIORITY 3: Non-IID Honest Soft-Filtering (DOWNWEIGHT)
+        # PRIORITY 3: Non-IID Honest Soft-Filtering & Moderate Jitter (DOWNWEIGHT)
         # ---------------------------------------------------------------------
-        # Evaluates honest non-IID clients once client behavioral trajectory is mature
+        # Evaluates honest non-IID clients and moderate timing variations
         c_dw = behavioral_ev.consecutive_dw
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
@@ -156,7 +157,8 @@ class JointDecisionEngine:
         
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
-        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent) and sim_g < self.theta_cos)
+        # Spatial range: supports non-IID minority (sim_g < theta_cos) AND high consensus with moderate temporal jitter (sim_g >= theta_cos)
+        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
 
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
