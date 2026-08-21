@@ -12,12 +12,12 @@ class ReputationManager:
 
     def __init__(self, client_ids: list[int], config: dict) -> None:
         # Slash rates (multiplicative)
-        self.alpha_I: float = config.get("alpha_I", 0.4)   # integrity slash
-        self.alpha_P: float = config.get("alpha_P", 0.2)   # pace slash
+        self.alpha_I: float = config.get("alpha_I", 0.30)  # integrity slash (moderated)
+        self.alpha_P: float = config.get("alpha_P", 0.20)  # pace slash
 
         # Recovery rates (additive)
-        self.beta_I: float = config.get("beta_I", 0.02)    # integrity recovery (slow)
-        self.beta_P: float = config.get("beta_P", 0.05)    # pace recovery (fast)
+        self.beta_I: float = config.get("beta_I", 0.05)    # integrity recovery (accelerated)
+        self.beta_P: float = config.get("beta_P", 0.08)    # pace recovery (fast)
 
         # Core invariants — asymmetry constraint
         assert self.beta_I < self.beta_P, (
@@ -77,15 +77,11 @@ class ReputationManager:
         self.spatial_reject_streak[cid] = 0
 
     def record_borderline_check(self, cid: int, sim: Optional[float]) -> None:
-        """After an update passes the cosine gate: if theta_cos <= sim <= theta_cos + borderline_margin,
-        increment borderline_streak[cid]. Otherwise, reset borderline_streak[cid].
-        If borderline_streak[cid] >= borderline_limit, apply normal integrity slash and reset the streak.
+        """Tracks borderline streak for diagnostic telemetry.
+        No integrity penalty is applied for accepted borderline updates.
         """
         if sim is not None and self.theta_cos <= sim <= (self.theta_cos + self.borderline_margin):
             self.borderline_streak[cid] += 1
-            if self.borderline_streak[cid] >= self.borderline_limit:
-                self.slash_integrity(cid)
-                self.borderline_streak[cid] = 0
         else:
             self.borderline_streak[cid] = 0
 

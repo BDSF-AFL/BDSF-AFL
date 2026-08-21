@@ -40,10 +40,10 @@ adaptive_clip_enabled: true
 static_clip_C: 10.0      # used only when adaptive_clip_enabled: false
 
 # Reputation (Pillar 2)
-alpha_I: 0.4
-alpha_P: 0.2
-beta_I: 0.02
-beta_P: 0.05
+alpha_I: 0.30
+alpha_P: 0.20
+beta_I: 0.05
+beta_P: 0.08
 # Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
 spatial_grace_k: 2
 borderline_margin: 0.10
