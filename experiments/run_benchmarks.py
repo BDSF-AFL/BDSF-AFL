@@ -182,6 +182,7 @@ def run_benchmarks_from_manifest(
     byz_fractions: Optional[List[float]] = None,
     seeds: Optional[List[int]] = None,
     rounds: Optional[int] = None,
+    dataset: Optional[str] = None,
 ) -> pd.DataFrame:
     """Executes the benchmark matrix specified in a manifest YAML file."""
     with open(manifest_path, "r", encoding="utf-8") as f:
@@ -192,6 +193,9 @@ def run_benchmarks_from_manifest(
         base_cfg["total_rounds"] = rounds
     else:
         base_cfg["total_rounds"] = manifest.get("rounds", 50)
+
+    if dataset:
+        base_cfg["dataset"] = dataset
 
     target_algos = algorithms or manifest.get("algorithms", ["Legacy_BDSF_AFL", "Proposed_BDSF_AFL"])
     target_attacks = attacks or manifest.get("attacks", ["COMPOUND"])

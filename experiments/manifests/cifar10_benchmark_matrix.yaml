@@ -1,0 +1,42 @@
+# BDSF-AFL Phase 4: CIFAR-10 Benchmark Experiment Manifest
+experiment:
+  name: "phase4_cifar10_benchmarks"
+  dataset: "CIFAR10"
+  rounds: 50
+  batch_size: 64
+  local_epochs: 2
+  lr: 0.01
+  N_clients: 20
+  M: 20
+  K_base: 50
+  K_ref: 10
+
+  algorithms:
+    - "Legacy_BDSF_AFL"
+    - "Proposed_BDSF_AFL"
+
+  heterogeneity:
+    - alpha: 0.1
+      label: "Extreme_NonIID"
+    - alpha: 0.5
+      label: "Moderate_NonIID"
+    - alpha: "iid"
+      label: "IID"
+
+  attacks:
+    - "NONE"
+    - "T1_HIGH_FREQ"
+    - "T2_STRAGGLER"
+    - "S1_POISON"
+    - "S2_MIMICRY"
+    - "ADAPTIVE"
+    - "COMPOUND"
+
+  byzantine_fractions:
+    - 0.2
+
+  seeds:
+    - 42
+
+  target_accuracy: 0.75
+  log_dir: "logs/phase4_results/benchmarks/"

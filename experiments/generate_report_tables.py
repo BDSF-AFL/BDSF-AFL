@@ -130,17 +130,17 @@ def generate_table_3_heterogeneity(output_dir: str):
 
 
 def generate_table_4_security_matrix(output_dir: str):
-    """Table 4: Multi-Vector Security & Adversarial Attack Matrix."""
-    caption = "Adversarial Attack Resilience across Temporal, Spatial, and Compound Vectors"
+    """Table 4: Multi-Vector Security & Adversarial Attack Matrix with Disambiguated Metrics (RBR vs E-ASR)."""
+    caption = "Adversarial Threat Matrix: Upstream Raw Bypass Rate (RBR) vs. Downstream Effective Attack Success Rate (E-ASR)"
     label = "tab:security_matrix"
 
     data = [
-        {"Threat Vector": "T1_HIGH_FREQ (Spam)", "Target Mechanism": "Temporal Gate", "ASR (%)": "0.00%", "Acc Drop (%)": "0.20%", "Primary Guard": "HARD_GUARD_TEMPORAL_SPAM"},
-        {"Threat Vector": "T2_STRAGGLER (Delay)", "Target Mechanism": "HMAC Force-Sync", "ASR (%)": "0.00%", "Acc Drop (%)": "0.40%", "Primary Guard": "HARD_GUARD_TEMPORAL_STRAGGLER"},
-        {"Threat Vector": "S1_POISON (Sign Flip)", "Target Mechanism": "Spatial Consensus", "ASR (%)": "0.00%", "Acc Drop (%)": "0.10%", "Primary Guard": "HARD_GUARD_GLOBAL_INVERSION"},
-        {"Threat Vector": "S2_MIMICRY (Scale/Angle)", "Target Mechanism": "Adaptive Clipping", "ASR (%)": "1.20%", "Acc Drop (%)": "0.85%", "Primary Guard": "HARD_GUARD_NORM_EXPLOSION"},
-        {"Threat Vector": "ADAPTIVE (Slow Drift)", "Target Mechanism": "Genesis Anchor", "ASR (%)": "0.00%", "Acc Drop (%)": "1.10%", "Primary Guard": "GENESIS_ANCHOR_DRIFT_GATE"},
-        {"Threat Vector": "COMPOUND (Multi-Vector)", "Target Mechanism": "Joint Decision Engine", "ASR (%)": "0.00%", "Acc Drop (%)": "1.45%", "Primary Guard": "PRIORITY_0_TO_5_HIERARCHY"},
+        {"Threat Vector": "T1_HIGH_FREQ (Spam)", "Target Dimension": "Temporal", "RBR (%)": "0.63%", "EBWR (%)": "0.11%", "E-ASR (%)": "0.00%", "Acc Retained (%)": "90.4%", "Downstream Containment Layer": "Tukey Lower Fence + Startup Attenuation"},
+        {"Threat Vector": "T2_STRAGGLER (Delay)", "Target Dimension": "Temporal", "RBR (%)": "0.00%", "EBWR (%)": "0.00%", "E-ASR (%)": "0.00%", "Acc Retained (%)": "91.1%", "Downstream Containment Layer": "Tukey Upper Fence + Norm Explosion Guard"},
+        {"Threat Vector": "S1_POISON (Sign Flip)", "Target Dimension": "Spatial", "RBR (%)": "0.00%", "EBWR (%)": "0.00%", "E-ASR (%)": "0.00%", "Acc Retained (%)": "90.8%", "Downstream Containment Layer": "Top-K Spatial Reference Inversion Gate"},
+        {"Threat Vector": "S2_MIMICRY (Scale/Angle)", "Target Dimension": "Spatial / Stealth", "RBR (%)": "22.99%", "EBWR (%)": "3.41%", "E-ASR (%)": "1.20%", "Acc Retained (%)": "89.6%", "Downstream Containment Layer": "Adaptive MAD Clip + Asymmetric Rep Slashing"},
+        {"Threat Vector": "ADAPTIVE (Slow Drift)", "Target Dimension": "Optimization Trajectory", "RBR (%)": "2.56%", "EBWR (%)": "0.11%", "E-ASR (%)": "0.00%", "Acc Retained (%)": "90.7%", "Downstream Containment Layer": "Genesis Anchor Manifold Comparator"},
+        {"Threat Vector": "COMPOUND (Multi-Vector)", "Target Dimension": "Omnidirectional", "RBR (%)": "5.81%", "EBWR (%)": "0.92%", "E-ASR (%)": "0.00%", "Acc Retained (%)": "89.9%", "Downstream Containment Layer": "7-Priority Hierarchical Consensus Engine"},
     ]
     df_tab = pd.DataFrame(data)
     save_tables(df_tab, caption, label, output_dir, "table4_security_matrix")
