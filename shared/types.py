@@ -56,9 +56,10 @@ class BehavioralEvidence:
     """Continuous historical behavioral consistency features."""
     sim_self_mean: Optional[float]        # Mean cosine similarity against client's own history (None if depth < min_history)
     sim_self_max: Optional[float]         # Max (nearest-neighbor) cosine similarity (None if depth < min_history)
-    norm_deviation_self: Optional[float]  # Robust MAD-based normalized deviation from client's historical norm
-    cadence_consistency: Optional[float]  # Robust MAD-based normalized deviation of arrival gap
-    history_depth: int                    # Number of entries in client's memory buffer
+    sim_self_mad: Optional[float] = None  # MAD dispersion of client's own historical trajectory
+    norm_deviation_self: Optional[float] = None  # Robust MAD-based normalized deviation from client's historical norm
+    cadence_consistency: Optional[float] = None  # Robust MAD-based normalized deviation of arrival gap
+    history_depth: int = 0                # Number of entries in client's memory buffer
     sim_anchor: Optional[float] = None    # Cosine similarity against Genesis Anchor (active when depth >= 1)
     consecutive_dw: int = 0               # Active consecutive downweight streak
     behavioral_mature: Optional[bool] = None  # True when history_depth >= behavioral_min_depth (depth >= 3)

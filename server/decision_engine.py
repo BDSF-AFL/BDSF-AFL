@@ -90,14 +90,19 @@ class JointDecisionEngine:
         # PRIORITY 1: Hard Safety Invariant Violations (Drop & Slash Immediately)
         # ---------------------------------------------------------------------
         # 1a. Severe Directional Inversion (Opposes Top-K global consensus beyond floor)
+        # Bypass hard drop ONLY if client is proven to be a persistent, anchor-consistent non-IID minority node
         if sim_g is not None and sim_g < -self.theta_floor:
-            return JointDecisionOutcome(
-                action="REJECT",
-                primary_reason="HARD_GUARD_GLOBAL_INVERSION",
-                aggregation_weight=0.0,
-                force_sync_required=False,
-                diagnostic_features={"priority": 1, "violation": "sim_global < -theta_floor", "sim_g": sim_g}
-            )
+            sim_a = behavioral_ev.sim_anchor
+            is_anchor_minority = (behavioral_ev.behavioral_mature and sim_a is not None and sim_s is not None and 
+                                  sim_a >= self.theta_anchor_min and sim_s >= self.theta_self)
+            if not is_anchor_minority:
+                return JointDecisionOutcome(
+                    action="REJECT",
+                    primary_reason="HARD_GUARD_GLOBAL_INVERSION",
+                    aggregation_weight=0.0,
+                    force_sync_required=False,
+                    diagnostic_features={"priority": 1, "violation": "sim_global < -theta_floor", "sim_g": sim_g}
+                )
 
         # 1b. Extreme Temporal Violations (Gated strictly by temporal maturity)
         if temporal_ev.temporal_mature and g_margin > self.delta_temp_mod:
@@ -141,10 +146,19 @@ class JointDecisionEngine:
         c_dw = behavioral_ev.consecutive_dw
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
-        is_drift_bounded = (c_dw < self.K_drift_max)
+        
+        # Dynamic manifold-calibrated minority consistency:
+        # Client's drift limiter is calibrated relative to its historical manifold dispersion (sim_self_mean - 1.5 * MAD)
+        sim_a = behavioral_ev.sim_anchor
+        sim_mad = behavioral_ev.sim_self_mad if behavioral_ev.sim_self_mad is not None else 0.05
+        anchor_manifold_bound = max(self.theta_anchor_min, (sim_s - 1.5 * (1.4826 * sim_mad + 1e-6))) if sim_s is not None else self.theta_anchor_min
+        is_minority_consistent = (sim_a is not None and sim_a >= anchor_manifold_bound)
+        
+        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
+        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent) and sim_g < self.theta_cos)
 
-        if (behavioral_ev.behavioral_mature and sim_g is not None and sim_g < self.theta_cos and sim_g >= -self.theta_floor and
+        if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
             is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
             
@@ -161,7 +175,8 @@ class JointDecisionEngine:
                     "c_dw": c_dw,
                     "theta_self_eff": theta_self_eff,
                     "alpha_eff": alpha_eff,
-                    "sim_anchor": behavioral_ev.sim_anchor
+                    "sim_anchor": behavioral_ev.sim_anchor,
+                    "is_minority_consistent": is_minority_consistent
                 }
             )
 

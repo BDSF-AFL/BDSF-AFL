@@ -139,6 +139,7 @@ class BehavioralMemoryManager:
         if norm_raw < 1e-9:
             sim_self_mean = 1.0
             sim_self_max = 1.0
+            sim_self_mad = 0.0
         else:
             unit_candidate = dW_flat / norm_raw
             # Stack stored unit vectors -> shape (|H_i|, D)
@@ -147,6 +148,8 @@ class BehavioralMemoryManager:
             sims = torch.mv(M, unit_candidate).numpy()
             sim_self_mean = float(np.mean(sims))
             sim_self_max = float(np.max(sims))
+            med_sim = float(np.median(sims))
+            sim_self_mad = float(np.median(np.abs(sims - med_sim)))
 
         # 3. Self Norm Deviation: Robust MAD-based normalized deviation
         norms = np.array(profile.norm_history)
@@ -157,6 +160,7 @@ class BehavioralMemoryManager:
         return BehavioralEvidence(
             sim_self_mean=sim_self_mean,
             sim_self_max=sim_self_max,
+            sim_self_mad=sim_self_mad,
             norm_deviation_self=norm_deviation_self,
             cadence_consistency=cadence_consistency,
             history_depth=depth,
