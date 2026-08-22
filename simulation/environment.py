@@ -348,9 +348,11 @@ class SimulationEnvironment:
                     )
                     t_end = time.time()
                     server.accumulate_eval_time(t_end - t_start)
+                    v_norm = server.get_momentum_norm()
                     accuracy_log.append(acc)
                     logger.log_metric(round=u, metric_name="test_accuracy", value=acc)
                     logger.log_metric(round=u, metric_name="val_loss", value=val_loss)
+                    logger.log_metric(round=u, metric_name="momentum_norm", value=v_norm)
 
                     # Generalization Gap & Composite Convergence Score
                     gen_gap = max(0.0, val_loss - 0.5)
@@ -373,6 +375,7 @@ class SimulationEnvironment:
                         f">>> Eval @ round {u // N}/{total_rounds} "
                         f"| Test Acc: {acc:.4f} "
                         f"| Loss: {val_loss:.4f} "
+                        f"| ||v||: {v_norm:.4f} "
                         f"| Score: {score:.4f} (Best: {best_acc:.4f} @ R{best_round}) "
                         f"| elapsed={elapsed:.1f}s",
                         flush=True,

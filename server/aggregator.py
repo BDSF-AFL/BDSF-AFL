@@ -892,6 +892,12 @@ class AggregatorServer:
         else:
             self.W_global = self.W_global + effective_delta
 
+    def get_momentum_norm(self) -> float:
+        """Returns the L2 norm of the server momentum velocity vector."""
+        if self.v_momentum is not None:
+            return float(torch.norm(self.v_momentum).item())
+        return 0.0
+
     def get_state(self) -> dict:
         """Serializes full reproducible server state for atomic checkpointing."""
         return {
