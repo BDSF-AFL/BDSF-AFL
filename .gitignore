@@ -9,7 +9,6 @@ data/
 __pycache__/
 *.pyc
 logs/
-tests/
 
 BDSF_AFL_Final_Report.pdf
 work_summary.md
