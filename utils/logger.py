@@ -1,4 +1,4 @@
-import os
+﻿import os
 import csv
 from typing import List, Dict, Any, Optional
 
@@ -15,21 +15,51 @@ class BDSFLogger:
         
         # Setup CSV file for updates
         self.csv_path = os.path.join(self.log_dir, f"{run_id}_updates.csv")
+        headers = [
+            "round", "client_id", "status", "reason",
+            "g_i", "I_i", "P_i",
+            "lower_fence", "upper_fence", "fence_margin", "client_z_score", "is_burn_in",
+            "spatial_mature", "temporal_mature", "behavioral_mature", "spatial_ref_count", "spatial_coherence",
+            "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
+            "weight", "action",
+            "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
+            "sim_anchor", "consecutive_dw", "quarantine_depth"
+        ]
         
-        # Fresh initialization: write headers immediately
-        with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "round", "client_id", "status", "reason",
-                "g_i", "I_i", "P_i",
-                "lower_fence", "upper_fence", "fence_margin", "client_z_score", "is_burn_in",
-                "spatial_mature", "temporal_mature", "behavioral_mature", "spatial_ref_count", "spatial_coherence",
-                "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
-                "weight", "action",
-                "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
-                "sim_anchor", "consecutive_dw", "quarantine_depth"
-            ])
-            f.flush()
+        is_resume = config.get("resume", False) and os.path.exists(self.csv_path)
+        resume_round = config.get("resume_round", None)
+        
+        if is_resume:
+            clean_rows = []
+            try:
+                with open(self.csv_path, mode='r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    next(reader, None)  # skip header
+                    for r in reader:
+                        if r and len(r) > 0:
+                            if resume_round is not None:
+                                try:
+                                    r_num = int(r[0])
+                                    if r_num <= resume_round:
+                                        clean_rows.append(r)
+                                except ValueError:
+                                    clean_rows.append(r)
+                            else:
+                                clean_rows.append(r)
+            except Exception:
+                clean_rows = []
+            
+            with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for r in clean_rows:
+                    writer.writerow(r)
+                f.flush()
+        else:
+            with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                f.flush()
 
     def log_update(self, *, round: int, client_id: int, status: str, reason: str, 
                    g_i: Optional[float] = None, I_i: Optional[float] = None, P_i: Optional[float] = None,
@@ -155,3 +185,6 @@ class BDSFLogger:
 
     def get_reputation_log(self) -> List[Dict[str, Any]]:
         return self._reputation_log
+
+    def get_metric_log(self) -> List[Dict[str, Any]]:
+        return self._metric_log

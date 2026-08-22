@@ -43,6 +43,8 @@ class AggregatorServer:
 
         # Step 2: Current global model (flattened 1D float32)
         self.W_global: torch.Tensor = W_init.clone().float()
+        self.server_momentum: float = float(config.get("server_momentum", 0.90))
+        self.v_momentum: torch.Tensor = torch.zeros_like(self.W_global)
 
         # Step 3: Client IDs
         self.client_ids = client_ids
@@ -366,7 +368,7 @@ class AggregatorServer:
             # 1. Handle ACCEPT Action (Full Consensus / Warm-Up)
             if outcome.action == "ACCEPT":
                 weight = outcome.aggregation_weight
-                self.W_global = self.W_global + eta * weight * delta_W_clipped
+                self._apply_global_update(eta * weight * delta_W_clipped)
 
                 entry = AcceptedEntry(
                     delta_W=delta_W_clipped.clone(),
@@ -397,7 +399,7 @@ class AggregatorServer:
                 for q_entry, q_act, q_age_mult in resolved_q:
                     if q_act == "ACCEPT":
                         q_w = q_age_mult * (q_entry.reputation_at_entry[0] * q_entry.reputation_at_entry[1])
-                        self.W_global = self.W_global + eta * q_w * q_entry.delta_W_clipped
+                        self._apply_global_update(eta * q_w * q_entry.delta_W_clipped)
                         self.logger.log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
@@ -457,7 +459,7 @@ class AggregatorServer:
             # 2. Handle DOWNWEIGHT Action (Non-IID Honest Soft-Filtering)
             elif outcome.action == "DOWNWEIGHT":
                 weight = outcome.aggregation_weight
-                self.W_global = self.W_global + eta * weight * delta_W_clipped
+                self._apply_global_update(eta * weight * delta_W_clipped)
 
                 entry = AcceptedEntry(
                     delta_W=delta_W_clipped.clone(),
@@ -879,6 +881,66 @@ class AggregatorServer:
     def get_virtual_time(self) -> float:
         """Returns the current virtual timeline time (excluding blocking evaluation periods)."""
         return time.time() - self.total_eval_time
+
+    def _apply_global_update(self, effective_delta: torch.Tensor) -> None:
+        """Applies momentum-enhanced asynchronous aggregation.
+        effective_delta is already scaled by eta and decision weight (1.0 for ACCEPT, 0.5 for DW).
+        """
+        if self.server_momentum > 0.0:
+            self.v_momentum = self.server_momentum * self.v_momentum + effective_delta
+            self.W_global = self.W_global + self.v_momentum
+        else:
+            self.W_global = self.W_global + effective_delta
+
+    def get_state(self) -> dict:
+        """Serializes full reproducible server state for atomic checkpointing."""
+        return {
+            "W_global": self.W_global.clone().cpu(),
+            "v_momentum": self.v_momentum.clone().cpu() if self.v_momentum is not None else None,
+            "round_number": self.round_number,
+            "update_counter": self.update_counter,
+            "rep_scores": {cid: {"I": s["I"], "P": s["P"]} for cid, s in self.rep_manager.scores.items()},
+            "rep_history": {cid: list(h) for cid, h in self.rep_manager._history.items()},
+            "spatial_streaks": dict(self.rep_manager.spatial_reject_streak),
+            "borderline_streaks": dict(self.rep_manager.borderline_streak),
+            "behavioral_profiles": {
+                cid: {
+                    "history": [v.clone().cpu() for v in prof.history],
+                    "anchor": prof.genesis_anchor.clone().cpu() if prof.genesis_anchor is not None else None,
+                    "consecutive_dw": prof.consecutive_dw,
+                    "norms": list(prof.norms),
+                } for cid, prof in self.behavioral_memory.profiles.items()
+            },
+        }
+
+    def load_state(self, state: dict) -> None:
+        """Restores full server state from a saved checkpoint."""
+        if "W_global" in state:
+            self.W_global.copy_(state["W_global"])
+        if "v_momentum" in state and state["v_momentum"] is not None and self.v_momentum is not None:
+            self.v_momentum.copy_(state["v_momentum"])
+        self.round_number = state.get("round_number", self.round_number)
+        self.update_counter = state.get("update_counter", self.update_counter)
+        if "rep_scores" in state:
+            for cid, s in state["rep_scores"].items():
+                if cid in self.rep_manager.scores:
+                    self.rep_manager.scores[cid]["I"] = s["I"]
+                    self.rep_manager.scores[cid]["P"] = s["P"]
+        if "spatial_streaks" in state:
+            for cid, val in state["spatial_streaks"].items():
+                if cid in self.rep_manager.spatial_reject_streak:
+                    self.rep_manager.spatial_reject_streak[cid] = val
+        if "borderline_streaks" in state:
+            for cid, val in state["borderline_streaks"].items():
+                if cid in self.rep_manager.borderline_streak:
+                    self.rep_manager.borderline_streak[cid] = val
+        if "behavioral_profiles" in state:
+            for cid, prof_data in state["behavioral_profiles"].items():
+                prof = self.behavioral_memory.get_or_create_profile(cid)
+                prof.history = [v.clone() for v in prof_data.get("history", [])]
+                prof.genesis_anchor = prof_data["anchor"].clone() if prof_data.get("anchor") is not None else None
+                prof.consecutive_dw = prof_data.get("consecutive_dw", 0)
+                prof.norms = list(prof_data.get("norms", []))
 
     def accumulate_eval_time(self, duration: float) -> None:
         """Accrues CPU execution time spent on blocking evaluations."""

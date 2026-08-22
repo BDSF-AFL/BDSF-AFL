@@ -39,46 +39,21 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
     random.seed(seed)
 
-class MNISTMLP(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(784, 128)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = x.view(-1, 784)
-        x = self.relu(self.fc1(x))
-        return self.fc2(x)
-
-class CIFAR10CNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(64 * 4 * 4, 64)
-        self.fc2 = nn.Linear(64, 10)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        x = self.pool(self.relu(self.conv1(x)))
-        x = self.pool(self.relu(self.conv2(x)))
-        x = self.pool(self.relu(self.conv3(x)))
-        x = x.view(-1, 64 * 4 * 4)
-        x = self.relu(self.fc1(x))
-        return self.fc2(x)
+import hashlib
+from models.resnet import CIFAR10ResNet18, MNISTMLP, CIFAR10CNN
 
 def _build_model(config: dict) -> Tuple[nn.Module, torch.Tensor]:
     """Builds the local model architecture and returns (model, W_init_flat)."""
     dataset_name = config.get("dataset", "CIFAR10")
-    if dataset_name == "MNIST":
+    arch = config.get("model_architecture", "resnet18" if dataset_name == "CIFAR10" else "mlp").lower()
+    
+    if dataset_name in ["MNIST", "FEMNIST"]:
         model = MNISTMLP()
-    elif dataset_name == "FEMNIST":
-        model = MNISTMLP()  # FEMNIST has 784 inputs, same as MNIST
     else:  # CIFAR10
-        model = CIFAR10CNN()
+        if arch == "cnn":
+            model = CIFAR10CNN()
+        else:
+            model = CIFAR10ResNet18()
         
     W_init = torch.cat([p.data.flatten() for p in model.parameters()]).float()
     return model, W_init
@@ -270,18 +245,64 @@ class SimulationEnvironment:
         total_updates      = total_rounds * N
         # Evaluate accuracy every eval_every "effective global rounds" worth of updates
         eval_every_updates = eval_every * N
+        
+        # Checkpointing & Convergence Configuration
+        log_dir = self.config.get("log_dir", "logs/")
+        ckpt_dir = os.path.join(log_dir, "checkpoints")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        run_id = self.config.get("run_id", f"run_{int(time.time())}")
+        config_hash = hashlib.sha256(str(sorted(self.config.items())).encode("utf-8")).hexdigest()[:16]
+        
+        patience = int(self.config.get("early_stopping_patience", 5))
+        evals_without_improvement = 0
+        best_score = -float("inf")
+        best_acc = 0.0
+        best_round = 0
+        
+        # Resume Checkpoint if requested
+        if self.config.get("resume", False):
+            ckpt_path = self.config.get("resume_checkpoint_path", os.path.join(ckpt_dir, f"{run_id}_latest.pt"))
+            if os.path.exists(ckpt_path):
+                print(f"[CHECKPOINT] Resuming from checkpoint: {ckpt_path}")
+                ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                saved_hash = ckpt.get("config_hash")
+                if saved_hash and saved_hash != config_hash:
+                    print(f"[WARNING] Checkpoint config_hash ({saved_hash}) differs from current config ({config_hash})")
+                server.load_state(ckpt.get("server_state", {}))
+                accuracy_log = list(ckpt.get("accuracy_log", []))
+                best_score = ckpt.get("best_score", best_score)
+                best_acc = ckpt.get("best_accuracy", best_acc)
+                best_round = ckpt.get("best_round", best_round)
+
+        def save_checkpoint(path: str, is_best: bool = False):
+            state = {
+                "config_hash": config_hash,
+                "model_arch": self.config.get("model_architecture", "resnet18"),
+                "round": server.round_number,
+                "update_counter": server.update_counter,
+                "best_accuracy": best_acc,
+                "best_score": best_score,
+                "best_round": best_round,
+                "accuracy_log": list(accuracy_log),
+                "server_state": server.get_state(),
+                "rng_state": torch.get_rng_state(),
+            }
+            torch.save(state, path)
 
         loop_start = time.time()
-
-        # Initial accuracy
-        t_start = time.time()
-        init_acc = metrics.compute_accuracy(model, test_loader, server.get_global_weights(), device=device)
-        t_end = time.time()
-        server.accumulate_eval_time(t_end - t_start)
-        accuracy_log.append(init_acc)
-        logger.log_metric(round=0, metric_name="test_accuracy", value=init_acc)
+        if not self.config.get("resume", False):
+            t_start = time.time()
+            init_acc, init_loss = metrics.compute_evaluation_metrics(model, test_loader, server.get_global_weights(), device=device)
+            t_end = time.time()
+            server.accumulate_eval_time(t_end - t_start)
+            accuracy_log.append(init_acc)
+            logger.log_metric(round=0, metric_name="test_accuracy", value=init_acc)
+            logger.log_metric(round=0, metric_name="val_loss", value=init_loss)
 
         async def run_loop():
+            # Dedicated background loop: drains any pending forced-sync queues
+            # without blocking client local training tasks.
+            drain_task = asyncio.create_task(server.drain_force_sync_queue(clients))
             stop_event = asyncio.Event()
 
             async def client_task(client):
@@ -298,6 +319,7 @@ class SimulationEnvironment:
             tasks = [asyncio.create_task(client_task(c)) for c in shuffled_clients]
 
             # Monitor accepted update count and trigger evaluation.
+            nonlocal best_score, best_acc, best_round, evals_without_improvement
             next_eval_at = eval_every_updates
             last_progress_at = -1  # track last round we printed progress
             while server.update_counter < total_updates:
@@ -321,17 +343,37 @@ class SimulationEnvironment:
                 if u >= next_eval_at:
                     u = server.update_counter   # snapshot for consistent logging
                     t_start = time.time()
-                    acc = metrics.compute_accuracy(
+                    acc, val_loss = metrics.compute_evaluation_metrics(
                         model, test_loader, server.get_global_weights(), device=device
                     )
                     t_end = time.time()
                     server.accumulate_eval_time(t_end - t_start)
                     accuracy_log.append(acc)
                     logger.log_metric(round=u, metric_name="test_accuracy", value=acc)
+                    logger.log_metric(round=u, metric_name="val_loss", value=val_loss)
+
+                    # Generalization Gap & Composite Convergence Score
+                    gen_gap = max(0.0, val_loss - 0.5)
+                    score = acc - 0.05 * gen_gap
+
+                    if score > best_score:
+                        best_score = score
+                        best_acc = acc
+                        best_round = u // N
+                        evals_without_improvement = 0
+                        save_checkpoint(os.path.join(ckpt_dir, f"{run_id}_best.pt"), is_best=True)
+                    else:
+                        evals_without_improvement += 1
+
+                    # Save latest checkpoint
+                    save_checkpoint(os.path.join(ckpt_dir, f"{run_id}_latest.pt"), is_best=False)
+
                     elapsed = time.time() - loop_start
                     print(
                         f">>> Eval @ round {u // N}/{total_rounds} "
-                        f"| Test Accuracy: {acc:.4f} "
+                        f"| Test Acc: {acc:.4f} "
+                        f"| Loss: {val_loss:.4f} "
+                        f"| Score: {score:.4f} (Best: {best_acc:.4f} @ R{best_round}) "
                         f"| elapsed={elapsed:.1f}s",
                         flush=True,
                     )
@@ -347,11 +389,21 @@ class SimulationEnvironment:
                     server.rep_manager.log_round(u)
                     next_eval_at += eval_every_updates
 
+                    # Early stopping check based on consecutive evaluation checkpoints
+                    if self.config.get("early_stopping", False) and evals_without_improvement >= patience:
+                        print(
+                            f"\n[EARLY STOPPING] Convergence plateau reached: no score gain for {patience} evals "
+                            f"({patience * (eval_every_updates // N)} rounds). Optimal model saved: Best Acc = {best_acc:.4f} at Round {best_round}.",
+                            flush=True,
+                        )
+                        break
+
                 await asyncio.sleep(0)  # yield to event loop so client tasks can run
 
             # Signal all client tasks to stop after their current round completes.
             stop_event.set()
             await asyncio.gather(*tasks, return_exceptions=True)
+            drain_task.cancel()
 
         # Run the true-async loop
         try:

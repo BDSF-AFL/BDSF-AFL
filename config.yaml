@@ -4,13 +4,13 @@
 N_clients: 20
 total_rounds: 500
 eval_every: 10
-log_dir: "logs/phase3_verify/"
-device: "cpu"              # auto-detected at runtime (TPU > CUDA > CPU)
+log_dir: "logs/"
+device: "cpu"
 
 # Dataset
-dataset: "MNIST"         # MNIST | CIFAR10 | FEMNIST
+dataset: "CIFAR10"       # MNIST | CIFAR10 | FEMNIST
 dirichlet_alpha: 0.1     # 0.1=heterogeneous | 0.5=moderate | .inf=IID
-batch_size: 256        # 256 saturates T4 GPU compute units for maximum throughput
+batch_size: 32
 
 # Client training
 local_epochs: 5
@@ -20,8 +20,14 @@ lognormal_mu: 0.5
 lognormal_sigma: 1.0
 fedprox_mu: 0.0          # 0.0 = disabled; 0.01 for FedProx baseline
 
-# Server aggregation
+# Server aggregation & Optimization (Phase 5)
 eta: 0.01
+server_momentum: 0.90                # Momentum-enhanced asynchronous aggregation (FedAvgM)
+model_architecture: "resnet18"       # resnet18 (CIFAR-10 Adapted) | cnn (Legacy baseline) | mlp (MNIST)
+early_stopping: true                 # Automated convergence stopping
+early_stopping_patience: 5           # Consecutive evaluations without gain before early stopping
+checkpoint_every: 5                  # Checkpoint frequency (evaluations)
+resume: false                        # Resume from saved checkpoint
 
 # Temporal filter (Pillar 1)
 K_base: 50
@@ -40,40 +46,17 @@ adaptive_clip_enabled: true
 static_clip_C: 10.0      # used only when adaptive_clip_enabled: false
 
 # Reputation (Pillar 2)
-alpha_I: 0.30
-alpha_P: 0.20
-beta_I: 0.05
-beta_P: 0.08
+alpha_I: 0.4
+alpha_P: 0.2
+beta_I: 0.02
+beta_P: 0.05
 # Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
 spatial_grace_k: 2
+temporal_grace_k: 3    # straggler rejections allowed before P_i is slashed
 borderline_margin: 0.10
 borderline_limit: 5
-
-# Behavioral Memory (Pillar 4 / Phase 2)
-behavioral_history_size: 10
-behavioral_min_history: 3
 
 # Attack simulation
 byz_fraction: 0.2        # 0.1 | 0.2 | 0.3; 0.5 for boundary test
 attack_type: "COMPOUND"  # T1_HIGH_FREQ | T2_STRAGGLER | S1_POISON |
                          # S2_MIMICRY | ADAPTIVE | COMPOUND
-
-# Joint Decision Engine & Multi-Action Filtering (Phase 3)
-decision_mode: "joint"            # "joint" | "legacy"
-warm_start_mode: "state_maturity" # "state_maturity" (Adaptive) | "fixed" (Legacy 80)
-temporal_min_samples: 20          # Minimum gap observations for temporal maturity
-behavioral_min_depth: 3           # Trajectory history depth for behavioral maturity
-warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
-theta_self: 0.60                  # Baseline self-similarity threshold
-theta_floor: 0.15                 # Global anchor floor: reject if sim_global < -theta_floor
-theta_anchor_min: 0.50            # Minimum cosine similarity to Genesis Anchor
-alpha_downweight: 0.35            # Base weight attenuation for non-IID updates
-K_drift_max: 5                    # Max consecutive downweights before threshold escalation
-delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
-delta_theta_max: 0.25             # Maximum total threshold penalty
-delta_temp_mod: 0.50              # Moderate temporal anomaly margin fraction
-enable_quarantine: true           # Enable bounded quarantine state machine
-quarantine_horizon: 5             # Maximum rounds an update is held before expiry
-quarantine_capacity: 20           # Maximum updates held in quarantine buffer
-delta_borderline: 0.05            # Spatial margin around theta_cos for quarantine
-trusted_integrity_min: 0.80       # Minimum integrity score I_i for moderate temporal quarantine

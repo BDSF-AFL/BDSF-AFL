@@ -1,10 +1,14 @@
-import torch
+﻿import torch
 import numpy as np
 from torch.utils.data import DataLoader
-
 from utils.device_utils import mark_step
 
 def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: torch.Tensor, device = "cpu") -> float:
+    acc, _ = compute_evaluation_metrics(model, test_loader, W_global, device=device)
+    return acc
+
+def compute_evaluation_metrics(model: torch.nn.Module, test_loader: DataLoader, W_global: torch.Tensor, device = "cpu"):
+    """Computes both test accuracy and cross-entropy loss on evaluation dataset."""
     model = model.to(device)
     offset = 0
     with torch.no_grad():
@@ -14,21 +18,27 @@ def compute_accuracy(model: torch.nn.Module, test_loader: DataLoader, W_global: 
             offset += numel
 
     model.eval()
+    criterion = torch.nn.CrossEntropyLoss()
+    total_loss = 0.0
     correct = 0
     total = 0
     with torch.no_grad():
         for inputs, labels in test_loader:
-            outputs = model(inputs.to(device))
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item() * labels.size(0)
             predicted = outputs.argmax(dim=1)
-            correct += (predicted == labels.to(device)).sum().item()
+            correct += (predicted == labels).sum().item()
             total += labels.size(0)
-        # Flush any pending XLA ops after eval loop (no-op on CUDA/CPU)
         mark_step()
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return correct / total if total > 0 else 0.0
+    avg_loss = total_loss / total if total > 0 else 0.0
+    acc = correct / total if total > 0 else 0.0
+    return acc, avg_loss
 
 def compute_attack_success_rate(rejection_log: list[dict], byzantine_ids: set[int]) -> float:
     byz_submissions = [r for r in rejection_log if r.get("client_id") in byzantine_ids and r.get("status") in ["ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT"]]
@@ -54,44 +64,6 @@ def compute_convergence_time(accuracy_log: list[float], target: float = 0.85) ->
         if acc >= target:
             return float(i)
     return float("inf")
-
-def compute_reputation_separation_auc(rep_manager, honest_ids: set[int], byzantine_ids: set[int]) -> float:
-    """Computes Area Under the Curve (AUC) measuring separation between honest and Byzantine integrity scores."""
-    if not byzantine_ids or not honest_ids:
-        return 1.0
-    
-    honest_scores = [rep_manager.get(cid)[0] for cid in honest_ids if cid in rep_manager.scores]
-    byz_scores = [rep_manager.get(cid)[0] for cid in byzantine_ids if cid in rep_manager.scores]
-    
-    if not honest_scores or not byz_scores:
-        return 1.0
-    
-    # Calculate Mann-Whitney U statistic: P(I_honest > I_byzantine)
-    n_pairs = 0
-    favorable = 0.0
-    for h in honest_scores:
-        for b in byz_scores:
-            n_pairs += 1
-            if h > b:
-                favorable += 1.0
-            elif abs(h - b) < 1e-9:
-                favorable += 0.5
-                
-    return favorable / n_pairs if n_pairs > 0 else 1.0
-
-def compute_reputation_means(rep_manager, honest_ids: set[int], byzantine_ids: set[int]) -> dict:
-    """Computes mean (I, P) scores for honest and Byzantine client groups."""
-    h_I = [rep_manager.get(cid)[0] for cid in honest_ids if cid in rep_manager.scores]
-    h_P = [rep_manager.get(cid)[1] for cid in honest_ids if cid in rep_manager.scores]
-    b_I = [rep_manager.get(cid)[0] for cid in byzantine_ids if cid in rep_manager.scores]
-    b_P = [rep_manager.get(cid)[1] for cid in byzantine_ids if cid in rep_manager.scores]
-    
-    return {
-        "final_I_mean_honest": float(np.mean(h_I)) if h_I else 1.0,
-        "final_P_mean_honest": float(np.mean(h_P)) if h_P else 1.0,
-        "final_I_mean_byzantine": float(np.mean(b_I)) if b_I else 0.0,
-        "final_P_mean_byzantine": float(np.mean(b_P)) if b_P else 0.0,
-    }
 
 def compute_comm_overhead_per_node(model_dim: int, include_hmac: bool = True) -> dict:
     gradient_bytes = model_dim * 4
