@@ -133,7 +133,7 @@ class AggregatorServer:
                     self.W_global = self.W_global + self.config.get("eta", 0.01) * avg_delta
                     self.sync_accumulator.clear()
                     
-                    self.logger.log_update(
+                    self._log_update(
                         round=self.round_number, client_id=cid,
                         g_i=g_i, I_i=I_i, P_i=P_i,
                         status="ACCEPT", reason="SYNC_ACCUMULATE",
@@ -151,7 +151,7 @@ class AggregatorServer:
                     return ret_val
                 else:
                     reg.last_update_time = t_now
-                    self.logger.log_update(
+                    self._log_update(
                         round=self.round_number, client_id=cid,
                         g_i=g_i, I_i=I_i, P_i=P_i,
                         status="ACCEPT", reason="SYNC_ACCUMULATE",
@@ -168,7 +168,7 @@ class AggregatorServer:
                 # Asynchronous FedAvg
                 reg.last_update_time = t_now
                 self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="ACCEPT", reason="ASYNC_FEDAVG",
@@ -188,7 +188,7 @@ class AggregatorServer:
         elif self.aggregation == "afl_unconstrained":
             reg.last_update_time = t_now
             self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="ACCEPT", reason="UNCONSTRAINED_AFL",
@@ -209,7 +209,7 @@ class AggregatorServer:
             tau_max = self.config.get("static_tau_max", 5.0)
             s_i = t_now - submission.tau
             if s_i > tau_max:
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="REJECT", reason="STATIC_DELAY_EXCEEDED",
@@ -224,7 +224,7 @@ class AggregatorServer:
                 }
             reg.last_update_time = t_now
             self.W_global = self.W_global + self.config.get("eta", 0.01) * submission.delta_W
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="ACCEPT", reason="STATIC_DELAY_AFL",
@@ -247,7 +247,7 @@ class AggregatorServer:
             if not passes_cosine:
                 # Fix: same cascade-prevention fix as in the bdsf_afl pipeline.
                 reg.last_update_time = t_now
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="REJECT", reason="SPATIAL_COSINE",
@@ -274,7 +274,7 @@ class AggregatorServer:
             )
             self.accepted_buffer.append(entry)
             self.spatial_validator.on_accept(entry)
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=1.0, P_i=1.0,
                 status="ACCEPT", reason="PURE_COSINE",
@@ -317,7 +317,7 @@ class AggregatorServer:
             multiplier = max(0.0, min(1.0, 1.0 - contrib_sim))
             reg.last_update_time = t_now
             self.W_global = self.W_global + self.config.get("eta", 0.01) * multiplier * submission.delta_W
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=multiplier, P_i=1.0,
                 status="ACCEPT", reason="FOOLSGOLD",
@@ -400,21 +400,21 @@ class AggregatorServer:
                     if q_act == "ACCEPT":
                         q_w = q_age_mult * (q_entry.reputation_at_entry[0] * q_entry.reputation_at_entry[1])
                         self._apply_global_update(eta * q_w * q_entry.delta_W_clipped)
-                        self.logger.log_update(
+                        self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
                             weight=q_w, action="ACCEPT",
                             quarantine_depth=self.quarantine_manager.depth,
                         )
                     elif q_act == "REJECT":
-                        self.logger.log_update(
+                        self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
                             weight=None, action="REJECT",
                             quarantine_depth=self.quarantine_manager.depth,
                         )
 
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="ACCEPT", reason=outcome.primary_reason,
@@ -477,7 +477,7 @@ class AggregatorServer:
                 I_i, P_i = self.rep_manager.get(cid)
                 reg.last_update_time = t_now
 
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="DOWNWEIGHT", reason=outcome.primary_reason,
@@ -531,7 +531,7 @@ class AggregatorServer:
                 )
                 reg.last_update_time = t_now
 
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="QUARANTINE", reason=outcome.primary_reason,
@@ -586,7 +586,7 @@ class AggregatorServer:
                     reg.last_update_time = t_now
 
                 I_i, P_i = self.rep_manager.get(cid)
-                self.logger.log_update(
+                self._log_update(
                     round=self.round_number, client_id=cid,
                     g_i=g_i, I_i=I_i, P_i=P_i,
                     status="REJECT", reason=outcome.primary_reason,
@@ -638,7 +638,7 @@ class AggregatorServer:
             I_i, P_i = self.rep_manager.get(cid)
             # Fix (Livelock): Do not reset last_update_time on high-frequency rejection.
             # Letting the gap accumulate prevents the client from being trapped in a loop.
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="TEMPORAL_HIGH_FREQ",
@@ -690,7 +690,7 @@ class AggregatorServer:
             # always exceeds U, trapping the client in a permanent
             # reject → force-sync → reject livelock.
             reg.last_update_time = fs_payload.timestamp
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="TEMPORAL_STRAGGLER",
@@ -741,7 +741,7 @@ class AggregatorServer:
             # rejections accumulate gap until g_i > U, cascading into the
             # permanent TEMPORAL_STRAGGLER livelock.
             reg.last_update_time = t_now
-            self.logger.log_update(
+            self._log_update(
                 round=self.round_number, client_id=cid,
                 g_i=g_i, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="SPATIAL_COSINE",
@@ -812,7 +812,7 @@ class AggregatorServer:
 
         # --- Step 12: Log and return under current round, then increment ---
         reg.last_update_time = t_now
-        self.logger.log_update(
+        self._log_update(
             round=self.round_number, client_id=cid,
             g_i=g_i, I_i=I_i, P_i=P_i,
             status="ACCEPT", reason="FULL_ACCEPT",
@@ -897,6 +897,11 @@ class AggregatorServer:
         if self.v_momentum is not None:
             return float(torch.norm(self.v_momentum).item())
         return 0.0
+
+    def _log_update(self, **kwargs):
+        if "v_momentum_norm" not in kwargs:
+            kwargs["v_momentum_norm"] = self.get_momentum_norm()
+        self.logger.log_update(**kwargs)
 
     def get_state(self) -> dict:
         """Serializes full reproducible server state for atomic checkpointing."""

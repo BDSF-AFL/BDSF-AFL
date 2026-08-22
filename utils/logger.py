@@ -23,7 +23,8 @@ class BDSFLogger:
             "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
             "weight", "action",
             "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
-            "sim_anchor", "consecutive_dw", "quarantine_depth"
+            "sim_anchor", "consecutive_dw", "quarantine_depth",
+            "v_momentum_norm"
         ]
         
         is_resume = config.get("resume", False) and os.path.exists(self.csv_path)
@@ -78,7 +79,8 @@ class BDSFLogger:
                    norm_deviation_self: Optional[float] = None, cadence_consistency: Optional[float] = None,
                    history_depth: Optional[int] = None,
                    sim_anchor: Optional[float] = None, consecutive_dw: Optional[int] = None,
-                   quarantine_depth: Optional[int] = None) -> None:
+                   quarantine_depth: Optional[int] = None,
+                   v_momentum_norm: Optional[float] = None) -> None:
         """Log update status and metadata. Appends to list and CSV."""
         act_val = action if action is not None else status
         entry = {
@@ -115,6 +117,7 @@ class BDSFLogger:
             "sim_anchor": sim_anchor,
             "consecutive_dw": consecutive_dw,
             "quarantine_depth": quarantine_depth,
+            "v_momentum_norm": v_momentum_norm,
         }
         self._rejection_log.append(entry)
         
@@ -147,6 +150,7 @@ class BDSFLogger:
         sa_val = f"{sim_anchor:.6f}" if sim_anchor is not None else ""
         cdw_val = str(consecutive_dw) if consecutive_dw is not None else ""
         qd_val = str(quarantine_depth) if quarantine_depth is not None else ""
+        vm_val = f"{v_momentum_norm:.6f}" if v_momentum_norm is not None else ""
         
         with open(self.csv_path, mode='a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
@@ -158,7 +162,8 @@ class BDSFLogger:
                 sim_g_val, nr_val, nc_val, nrm_val, dbc_val, ra_val,
                 w_val, act_val,
                 ss_mean_val, ss_max_val, nd_self_val, cc_val, hd_val,
-                sa_val, cdw_val, qd_val
+                sa_val, cdw_val, qd_val,
+                vm_val
             ])
             f.flush()
 
