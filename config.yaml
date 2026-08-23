@@ -13,12 +13,14 @@ dirichlet_alpha: 0.1     # 0.1=heterogeneous | 0.5=moderate | .inf=IID
 batch_size: 32
 
 # Client training
-local_epochs: 5
+local_epochs: 1              # single-epoch local steps to minimize non-IID client drift
 local_lr: 0.01
-T_base: 1.0              # base compute time (seconds; simulated)
+lr_schedule: "cosine"        # dynamic learning rate: cosine annealing from 0.01 -> 0.001
+lr_min: 0.001
+T_base: 1.0                  # base compute time (seconds; simulated)
 lognormal_mu: 0.5
 lognormal_sigma: 1.0
-fedprox_mu: 0.0          # 0.0 = disabled; 0.01 for FedProx baseline
+fedprox_mu: 0.01             # proximal regularization to bound non-IID trajectory deviation
 
 # Server aggregation & Optimization (Phase 5)
 eta: 0.10                   # calibrated server learning rate for 20-client asynchronous aggregation

@@ -4,9 +4,12 @@ experiment:
   dataset: "MNIST"
   rounds: 50
   batch_size: 64
-  local_epochs: 2
+  local_epochs: 1
   lr: 0.01
   local_lr: 0.01
+  lr_schedule: "cosine"
+  lr_min: 0.001
+  fedprox_mu: 0.01
   N_clients: 20
   M: 60
   K_base: 50

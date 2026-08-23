@@ -40,14 +40,15 @@ class ClientNode:
         await self._simulate_delay()
  
         # 3. Train locally
+        current_round = getattr(self.server, "round_number", 0)
         if self.pool is not None:
             from simulation.environment import _run_trainer_in_process
             loop = asyncio.get_running_loop()
             delta_W = await loop.run_in_executor(
-                self.pool, _run_trainer_in_process, self.local_model, self.dataloader, self.config, W_global
+                self.pool, _run_trainer_in_process, self.local_model, self.dataloader, self.config, W_global, current_round
             )
         else:
-            delta_W = self.trainer.train(W_global)
+            delta_W = self.trainer.train(W_global, current_round=current_round)
  
         # 4. Build submission
         t_submit = self.server.get_virtual_time()

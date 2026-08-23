@@ -21,7 +21,7 @@ from utils.logger import BDSFLogger
 from utils.device_utils import resolve_device, resolve_all_devices, gpu_count, mark_step, set_xla_seed
 import utils.metrics as metrics
 
-def _run_trainer_in_process(model: nn.Module, dataloader, config: dict, W_global: torch.Tensor) -> torch.Tensor:
+def _run_trainer_in_process(model, dataloader, config, W_global, current_round: int = 0):
     """Standalone worker function executed inside ProcessPoolExecutor for true GPU parallelism."""
     torch.set_num_threads(1)
     if hasattr(torch, "set_num_interop_threads"):
@@ -30,7 +30,7 @@ def _run_trainer_in_process(model: nn.Module, dataloader, config: dict, W_global
         except Exception:
             pass
     trainer = LocalTrainer(model, dataloader, config)
-    return trainer.train(W_global)
+    return trainer.train(W_global, current_round=current_round)
 
 def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
@@ -86,13 +86,14 @@ class AttackInjectorWrapper:
         await self.client._simulate_delay()
  
         # 3. Train locally to get honest gradient
+        current_round = getattr(self.server, "round_number", 0)
         if getattr(self.client, "pool", None) is not None:
             loop = asyncio.get_running_loop()
             honest_delta_W = await loop.run_in_executor(
-                self.client.pool, _run_trainer_in_process, self.client.local_model, self.client.dataloader, self.client.config, W_global
+                self.client.pool, _run_trainer_in_process, self.client.local_model, self.client.dataloader, self.client.config, W_global, current_round
             )
         else:
-            honest_delta_W = self.client.trainer.train(W_global)
+            honest_delta_W = self.client.trainer.train(W_global, current_round=current_round)
         t_submit_honest = self.server.get_virtual_time()
         
         # Calculate honest gap g_i
