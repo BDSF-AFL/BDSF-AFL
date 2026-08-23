@@ -110,6 +110,10 @@ class AggregatorServer:
         self.sync_accumulator = {}
         self.grad_history = {cid: [] for cid in client_ids}
 
+        # Step 17: Deadlock-breaking watchdog
+        self.consecutive_rejects: int = 0
+        self.deadlock_threshold: int = config.get("deadlock_threshold", len(client_ids))
+
     # ------------------------------------------------------------------
     # Main entry point — the 12-step pipeline
     # ------------------------------------------------------------------
@@ -452,6 +456,7 @@ class AggregatorServer:
                     "I_i": I_i,
                     "P_i": P_i,
                 }
+                self.consecutive_rejects = 0
                 self.update_counter += 1
                 self.round_number += 1
                 return ret_val
@@ -515,6 +520,7 @@ class AggregatorServer:
                     "I_i": I_i,
                     "P_i": P_i,
                 }
+                self.consecutive_rejects = 0
                 self.update_counter += 1
                 self.round_number += 1
                 return ret_val
@@ -616,6 +622,12 @@ class AggregatorServer:
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
+                self.consecutive_rejects += 1
+                if self.consecutive_rejects >= self.deadlock_threshold:
+                    # Deadlock Watchdog: Flush stale spatial reference buffer to re-align with live population
+                    self.spatial_validator.reset_buffer()
+                    self.consecutive_rejects = 0
+
                 return {
                     "status": "REJECT",
                     "reason": outcome.primary_reason,

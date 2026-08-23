@@ -22,7 +22,7 @@ fedprox_mu: 0.0          # 0.0 = disabled; 0.01 for FedProx baseline
 
 # Server aggregation & Optimization (Phase 5)
 eta: 1.0
-server_momentum: 0.90                # Momentum-enhanced asynchronous aggregation (FedAvgM)
+server_momentum: 0.50                # Momentum-enhanced asynchronous aggregation (FedAvgM)
 model_architecture: "resnet18"       # resnet18 (CIFAR-10 Adapted) | cnn (Legacy baseline) | mlp (MNIST)
 early_stopping: true                 # Automated convergence stopping
 early_stopping_patience: 5           # Consecutive evaluations without gain before early stopping
@@ -41,6 +41,7 @@ K_ref: 6
 M: 60
 theta_cos: 0.1
 theta_self: 0.20
+theta_floor: 0.35
 theta_anchor_min: 0.20
 gamma_clip: 1.5
 top_k_ref: true          # always topk reference

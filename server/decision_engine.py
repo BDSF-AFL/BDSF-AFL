@@ -25,7 +25,7 @@ class JointDecisionEngine:
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
         self.theta_self: float = config.get("theta_self", 0.20)
-        self.theta_floor: float = config.get("theta_floor", 0.15)
+        self.theta_floor: float = config.get("theta_floor", 0.35)
         self.theta_anchor_min: float = config.get("theta_anchor_min", 0.20)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 5)

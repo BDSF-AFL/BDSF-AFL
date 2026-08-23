@@ -11,7 +11,9 @@ experiment:
   K_base: 50
   K_ref: 6
   eta: 1.0
+  server_momentum: 0.50
   theta_self: 0.20
+  theta_floor: 0.35
   theta_anchor_min: 0.20
 
   algorithms:

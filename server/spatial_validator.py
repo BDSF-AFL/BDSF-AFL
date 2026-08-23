@@ -116,6 +116,10 @@ class SpatialValidator:
         (after Step 10 in the pipeline)."""
         self._buffer.append(entry)
 
+    def reset_buffer(self) -> None:
+        """Flushes the sliding window buffer to break reference stagnation deadlocks."""
+        self._buffer.clear()
+
     # ------------------------------------------------------------------
     # Cosine similarity gate
     # ------------------------------------------------------------------
