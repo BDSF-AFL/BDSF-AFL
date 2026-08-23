@@ -374,11 +374,14 @@ class AggregatorServer:
                 weight = outcome.aggregation_weight
                 self._apply_global_update(eta * weight * delta_W_clipped)
 
+                is_warmup = (outcome.primary_reason in ["SPATIAL_WARMUP_ACCEPT", "BURN_IN_ACCEPT"])
+
                 entry = AcceptedEntry(
                     delta_W=delta_W_clipped.clone(),
                     I_score=I_i,
                     P_score=P_i,
                     client_id=cid,
+                    is_warmup=is_warmup,
                 )
                 self.accepted_buffer.append(entry)
                 self.spatial_validator.on_accept(entry)
@@ -387,7 +390,6 @@ class AggregatorServer:
                 # Option A Strict Warmup Isolation:
                 # SPATIAL_WARMUP_ACCEPT updates global model & spatial buffer,
                 # but skips behavioral memory insertion and reputation recovery.
-                is_warmup = (outcome.primary_reason in ["SPATIAL_WARMUP_ACCEPT", "BURN_IN_ACCEPT"])
                 if not is_warmup:
                     self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False)
                     self.rep_manager.record_accepted_update(cid)

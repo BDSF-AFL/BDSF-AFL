@@ -18,6 +18,7 @@ class AcceptedEntry:
     I_score:   float           # I_i at time of acceptance
     P_score:   float           # P_i at time of acceptance
     client_id: Optional[int] = None  # Client ID of submitting client
+    is_warmup: bool = False           # True if accepted during warmup phase
 
 @dataclass
 class TemporalEvidence:

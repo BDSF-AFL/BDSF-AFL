@@ -33,6 +33,9 @@ class SpatialValidator:
 
         # Keep config reference for static_clip_C fallback
         self.config: dict = config
+        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 25))
+        self._unique_accepted_clients: set = set()
+        self._total_accepted_count: int = 0
         
         # Track the last computed cosine similarity for the borderline suspicion check
         self.last_sim: Optional[float] = None
@@ -42,9 +45,11 @@ class SpatialValidator:
     # ------------------------------------------------------------------
 
     def _get_positive_norms(self) -> List[float]:
-        """Extracts finite positive Euclidean norms from the accepted buffer."""
+        """Extracts finite positive Euclidean norms from the accepted buffer, skipping warmup entries."""
         pos_norms = []
         for e in self._buffer:
+            if getattr(e, "is_warmup", False):
+                continue
             n = torch.norm(e.delta_W.flatten().float()).item()
             if np.isfinite(n) and n > EPS:
                 pos_norms.append(n)
@@ -57,7 +62,14 @@ class SpatialValidator:
     def extract_evidence(self, delta_W: torch.Tensor) -> SpatialEvidence:
         """Extracts continuous spatial evidence without modifying state."""
         ref, ref_count, coherence = self._build_reference_stats()
-        spatial_mature = (ref is not None and ref_count >= self.K_ref)
+        n_unique = len(self._unique_accepted_clients)
+        min_unique = max(self.K_ref, self.config.get("N_clients", 20) // 2)
+        spatial_mature = (
+            ref is not None
+            and ref_count >= self.K_ref
+            and n_unique >= min_unique
+            and self._total_accepted_count >= self.spatial_warmup_rounds
+        )
 
         dW_flat = delta_W.flatten().float()
         norm_raw = torch.norm(dW_flat).item()
@@ -115,6 +127,9 @@ class SpatialValidator:
         """Called by AggregatorServer every time an update is fully accepted
         (after Step 10 in the pipeline)."""
         self._buffer.append(entry)
+        if entry.client_id is not None:
+            self._unique_accepted_clients.add(entry.client_id)
+        self._total_accepted_count += 1
 
     def reset_buffer(self) -> None:
         """Flushes the sliding window buffer to break reference stagnation deadlocks."""

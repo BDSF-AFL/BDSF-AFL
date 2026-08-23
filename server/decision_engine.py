@@ -25,7 +25,7 @@ class JointDecisionEngine:
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
         self.theta_self: float = config.get("theta_self", 0.60)
-        self.theta_floor: float = config.get("theta_floor", 0.15)
+        self.theta_floor: float = config.get("theta_floor", 0.10)
         self.theta_anchor_min: float = config.get("theta_anchor_min", 0.50)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 5)
@@ -37,6 +37,8 @@ class JointDecisionEngine:
         self.trusted_integrity_min: float = config.get("trusted_integrity_min", 0.80)
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
+        self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 2.5))
+        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 25))
 
     def evaluate(
         self,
@@ -59,6 +61,15 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 0a: Universal Safety Pre-Check (Active ALWAYS, even during warmup)
         # ---------------------------------------------------------------------
+        if norm_r <= 1e-9:
+            return JointDecisionOutcome(
+                action="REJECT",
+                primary_reason="HARD_GUARD_ZERO_GRADIENT",
+                aggregation_weight=0.0,
+                force_sync_required=True,
+                diagnostic_features={"priority": 0, "violation": "norm_raw == 0", "norm_r": norm_r}
+            )
+
         if C_t is not None and np.isfinite(C_t) and C_t > 1e-9 and norm_r > 3.0 * C_t:
             return JointDecisionOutcome(
                 action="REJECT",
@@ -91,18 +102,30 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # 1a. Severe Directional Inversion (Opposes Top-K global consensus beyond floor)
         # Bypass hard drop ONLY if client is proven to be a persistent, anchor-consistent non-IID minority node
+        # Multi-signal check: require BOTH directional inversion AND corroborating norm/behavior anomaly
         if sim_g is not None and sim_g < -self.theta_floor:
             sim_a = behavioral_ev.sim_anchor
             is_anchor_minority = (behavioral_ev.behavioral_mature and sim_a is not None and sim_s is not None and 
                                   sim_a >= self.theta_anchor_min and sim_s >= self.theta_self)
             if not is_anchor_minority:
-                return JointDecisionOutcome(
-                    action="REJECT",
-                    primary_reason="HARD_GUARD_GLOBAL_INVERSION",
-                    aggregation_weight=0.0,
-                    force_sync_required=False,
-                    diagnostic_features={"priority": 1, "violation": "sim_global < -theta_floor", "sim_g": sim_g}
-                )
+                norm_ratio = spatial_ev.norm_ratio_median
+                has_norm_anomaly = (norm_ratio is not None and norm_ratio > self.norm_anomaly_threshold)
+                has_behavior_anomaly = (behavioral_ev.behavioral_mature and sim_s is not None
+                                        and sim_s < (self.theta_self - 0.20))
+                if has_norm_anomaly or has_behavior_anomaly:
+                    return JointDecisionOutcome(
+                        action="REJECT",
+                        primary_reason="HARD_GUARD_GLOBAL_INVERSION",
+                        aggregation_weight=0.0,
+                        force_sync_required=False,
+                        diagnostic_features={
+                            "priority": 1,
+                            "violation": "sim_global < -theta_floor + corroboration",
+                            "sim_g": sim_g,
+                            "has_norm_anomaly": has_norm_anomaly,
+                            "has_behavior_anomaly": has_behavior_anomaly,
+                        }
+                    )
 
         # 1b. Extreme Temporal Violations (Gated strictly by temporal maturity)
         if temporal_ev.temporal_mature and g_margin > self.delta_temp_mod:
