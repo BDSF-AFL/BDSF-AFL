@@ -147,7 +147,7 @@ class JointDecisionEngine:
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
         if behavioral_ev.behavioral_mature:
             is_self_valid = (sim_s is not None and sim_s >= self.theta_self_mature)
-            is_anchor_valid = (behavioral_ev.sim_anchor is not None and behavioral_ev.sim_anchor >= self.theta_anchor_mature)
+            is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
         else:
             is_self_valid = (sim_s is None or sim_s >= self.theta_self)
             is_anchor_valid = True
@@ -183,7 +183,7 @@ class JointDecisionEngine:
         sim_mad = behavioral_ev.sim_self_mad if behavioral_ev.sim_self_mad is not None else 0.05
         anchor_manifold_bound = max(self.theta_anchor_min, (sim_s - 1.5 * (1.4826 * sim_mad + 1e-6))) if sim_s is not None else self.theta_anchor_min
         is_minority_consistent = (sim_a is not None and sim_a >= anchor_manifold_bound)
-        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
+        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent or (sim_s is not None and sim_s >= self.theta_self_mature)
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
 

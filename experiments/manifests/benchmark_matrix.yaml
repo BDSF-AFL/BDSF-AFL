@@ -23,7 +23,7 @@ experiment:
   theta_anchor_mature: 0.40
   adaptive_clip_enabled: false
   static_clip_C: 10.0
-  spatial_warmup_rounds: 17
+  spatial_warmup_rounds: 20
   norm_anomaly_threshold: 2.5
 
   algorithms:
