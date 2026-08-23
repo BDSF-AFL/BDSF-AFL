@@ -1,4 +1,4 @@
-﻿import torch
+import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from utils.device_utils import mark_step
@@ -64,6 +64,43 @@ def compute_convergence_time(accuracy_log: list[float], target: float = 0.85) ->
         if acc >= target:
             return float(i)
     return float("inf")
+
+def compute_reputation_separation_auc(rep_manager, honest_ids: set[int], byzantine_ids: set[int]) -> float:
+    """Computes Wilcoxon-Mann-Whitney rank AUC of reputation separation between honest and byzantine clients."""
+    if not rep_manager or not honest_ids or not byzantine_ids:
+        return 1.0
+    honest_scores = [rep_manager.get(cid)[0] for cid in honest_ids if cid in rep_manager.scores]
+    byz_scores = [rep_manager.get(cid)[0] for cid in byzantine_ids if cid in rep_manager.scores]
+    if not honest_scores or not byz_scores:
+        return 1.0
+    pairs = 0
+    wins = 0.0
+    for h in honest_scores:
+        for b in byz_scores:
+            pairs += 1
+            if h > b:
+                wins += 1.0
+            elif h == b:
+                wins += 0.5
+    return wins / pairs if pairs > 0 else 1.0
+
+def compute_reputation_means(rep_manager, honest_ids: set[int], byzantine_ids: set[int]) -> dict:
+    """Computes mean Integrity and Performance reputation for honest vs byzantine cohorts."""
+    if not rep_manager:
+        return {
+            "final_I_mean_honest": 1.0, "final_P_mean_honest": 1.0,
+            "final_I_mean_byzantine": 0.0, "final_P_mean_byzantine": 0.0
+        }
+    h_I = [rep_manager.get(cid)[0] for cid in honest_ids if cid in rep_manager.scores]
+    h_P = [rep_manager.get(cid)[1] for cid in honest_ids if cid in rep_manager.scores]
+    b_I = [rep_manager.get(cid)[0] for cid in byzantine_ids if cid in rep_manager.scores]
+    b_P = [rep_manager.get(cid)[1] for cid in byzantine_ids if cid in rep_manager.scores]
+    return {
+        "final_I_mean_honest": float(np.mean(h_I)) if h_I else 1.0,
+        "final_P_mean_honest": float(np.mean(h_P)) if h_P else 1.0,
+        "final_I_mean_byzantine": float(np.mean(b_I)) if b_I else 0.0,
+        "final_P_mean_byzantine": float(np.mean(b_P)) if b_P else 0.0,
+    }
 
 def compute_comm_overhead_per_node(model_dim: int, include_hmac: bool = True) -> dict:
     gradient_bytes = model_dim * 4
