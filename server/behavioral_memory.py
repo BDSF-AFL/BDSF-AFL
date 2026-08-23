@@ -44,7 +44,7 @@ class ClientBehavioralProfile:
             self.consecutive_downweights = 0
             self._update_anchor(unit_vec)
 
-    def _update_anchor(self, unit_vec: torch.Tensor, lambda_anchor: float = 0.05) -> None:
+    def _update_anchor(self, unit_vec: torch.Tensor, lambda_anchor: float = 0.15) -> None:
         """Initializes or slowly updates the long-term Genesis Anchor on full ACCEPT."""
         if self.genesis_anchor is None:
             self.early_vectors.append(unit_vec.clone())
