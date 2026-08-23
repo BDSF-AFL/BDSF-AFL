@@ -40,6 +40,8 @@ fixed_K: false           # ablation: true = disable adaptive K_t
 K_ref: 10
 M: 30
 theta_cos: 0.1
+theta_self: 0.20
+theta_anchor_min: 0.20
 gamma_clip: 1.5
 top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true
