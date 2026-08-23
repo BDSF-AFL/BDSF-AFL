@@ -324,8 +324,8 @@ class SimulationEnvironment:
 
             # Monitor accepted update count and trigger evaluation.
             nonlocal best_score, best_acc, best_round, evals_without_improvement
-            next_eval_at = eval_every_updates
-            last_progress_at = -1  # track last round we printed progress
+            next_eval_at = ((server.update_counter // eval_every_updates) + 1) * eval_every_updates
+            last_progress_at = (server.update_counter // N) - 1  # track last round we printed progress
             while server.update_counter < total_updates:
                 u = server.update_counter  # snapshot
                 eff_round = u // N
