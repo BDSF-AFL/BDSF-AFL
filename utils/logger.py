@@ -1,4 +1,4 @@
-﻿import os
+import os
 import csv
 from typing import List, Dict, Any, Optional
 
@@ -193,3 +193,43 @@ class BDSFLogger:
 
     def get_metric_log(self) -> List[Dict[str, Any]]:
         return self._metric_log
+
+    def truncate_csv_at_round(self, resume_update: int) -> None:
+        """Truncates the CSV log to retain only rows recorded strictly before resume_update, eliminating duplicates on resume."""
+        if not os.path.exists(self.csv_path):
+            return
+        headers = [
+            "round", "client_id", "status", "reason",
+            "g_i", "I_i", "P_i",
+            "lower_fence", "upper_fence", "fence_margin", "client_z_score", "is_burn_in",
+            "spatial_mature", "temporal_mature", "behavioral_mature", "spatial_ref_count", "spatial_coherence",
+            "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
+            "weight", "action",
+            "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
+            "sim_anchor", "consecutive_dw", "quarantine_depth",
+            "v_momentum_norm"
+        ]
+        clean_rows = []
+        try:
+            with open(self.csv_path, mode='r', newline='', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                next(reader, None)  # skip header
+                for r in reader:
+                    if r and len(r) > 0:
+                        try:
+                            r_num = int(r[0])
+                            if r_num < resume_update:
+                                clean_rows.append(r)
+                        except ValueError:
+                            pass
+        except Exception:
+            clean_rows = []
+
+        with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for r in clean_rows:
+                writer.writerow(r)
+            f.flush()
+        
+        self._rejection_log = [e for e in self._rejection_log if e.get("round", 0) < resume_update]

@@ -87,13 +87,7 @@ class AttackInjectorWrapper:
  
         # 3. Train locally to get honest gradient
         current_round = getattr(self.server, "round_number", 0)
-        if getattr(self.client, "pool", None) is not None:
-            loop = asyncio.get_running_loop()
-            honest_delta_W = await loop.run_in_executor(
-                self.client.pool, _run_trainer_in_process, self.client.local_model, self.client.dataloader, self.client.config, W_global, current_round
-            )
-        else:
-            honest_delta_W = self.client.trainer.train(W_global, current_round=current_round)
+        honest_delta_W = self.client.trainer.train(W_global, current_round=current_round)
         t_submit_honest = self.server.get_virtual_time()
         
         # Calculate honest gap g_i
@@ -194,11 +188,6 @@ class SimulationEnvironment:
         print(f"  >> Distributing {N} clients across {n_gpus} device(s): "
               f"{[str(d) for d in all_devices]}")
 
-        # Multi-process pool for parallel GPU training across cuda:0 and cuda:1
-        use_pool = torch.cuda.is_available() and n_gpus > 1
-        mp_ctx = multiprocessing.get_context("spawn") if use_pool else None
-        pool = concurrent.futures.ProcessPoolExecutor(max_workers=n_gpus, mp_context=mp_ctx) if use_pool else None
-
         clients = []
         for i in range(N):
             # Round-robin device assignment
@@ -210,7 +199,7 @@ class SimulationEnvironment:
             trainer = LocalTrainer(local_model, dataloaders[i], client_config)
             session_key = server.get_session_key(i)
             fs_handler = ForceSyncHandler(i, session_key, logger)
-            client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger, local_model=local_model, dataloader=dataloaders[i], pool=pool)
+            client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger, local_model=local_model, dataloader=dataloaders[i], pool=None)
             
             if i in byz_ids:
                 injector = AttackInjector(self.attack_type, i, self.config)
@@ -274,6 +263,7 @@ class SimulationEnvironment:
                 best_score = ckpt.get("best_score", best_score)
                 best_acc = ckpt.get("best_accuracy", best_acc)
                 best_round = ckpt.get("best_round", best_round)
+                logger.truncate_csv_at_round(server.update_counter)
 
         def save_checkpoint(path: str, is_best: bool = False):
             if not self.config.get("save_checkpoints", True):
@@ -395,6 +385,12 @@ class SimulationEnvironment:
                         )
                     server.rep_manager.log_round(u)
                     next_eval_at = max(next_eval_at + eval_every_updates, ((server.update_counter // eval_every_updates) + 1) * eval_every_updates)
+                    
+                    # Memory & VRAM GC cleanup to prevent system RAM leaks
+                    import gc
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                     # Early stopping check based on consecutive evaluation checkpoints
                     if self.config.get("early_stopping", False) and evals_without_improvement >= patience:
