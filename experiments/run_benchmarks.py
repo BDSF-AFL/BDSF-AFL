@@ -183,6 +183,13 @@ def run_benchmarks_from_manifest(
     seeds: Optional[List[int]] = None,
     rounds: Optional[int] = None,
     dataset: Optional[str] = None,
+    model: Optional[str] = None,
+    early_stopping: Optional[bool] = None,
+    target_accuracy: Optional[float] = None,
+    patience: Optional[int] = None,
+    save_checkpoints: Optional[bool] = None,
+    checkpoint_dir: Optional[str] = None,
+    **kwargs: Any,
 ) -> pd.DataFrame:
     """Executes the benchmark matrix specified in a manifest YAML file."""
     with open(manifest_path, "r", encoding="utf-8") as f:
@@ -196,9 +203,20 @@ def run_benchmarks_from_manifest(
 
     if dataset:
         base_cfg["dataset"] = dataset
+    if model:
+        base_cfg["model_architecture"] = model.lower()
+    if early_stopping is not None:
+        base_cfg["early_stopping"] = early_stopping
+    if patience is not None:
+        base_cfg["early_stopping_patience"] = patience
+    if checkpoint_dir:
+        base_cfg["log_dir"] = checkpoint_dir
+    for k, v in kwargs.items():
+        base_cfg[k] = v
 
     target_algos = algorithms or manifest.get("algorithms", ["Legacy_BDSF_AFL", "Proposed_BDSF_AFL"])
     target_attacks = attacks or manifest.get("attacks", ["COMPOUND"])
+    target_target_acc = target_accuracy if target_accuracy is not None else manifest.get("target_accuracy", 0.85)
     
     # Parse heterogeneity
     raw_het = alphas or [h["alpha"] if isinstance(h, dict) else h for h in manifest.get("heterogeneity", [0.1])]
@@ -214,6 +232,8 @@ def run_benchmarks_from_manifest(
     print(f"Alphas     : {raw_het}")
     print(f"Byz Fracs  : {target_byz}")
     print(f"Seeds      : {target_seeds}")
+    print(f"Model Arch : {base_cfg.get('model_architecture', 'resnet18')}")
+    print(f"Early Stop : {base_cfg.get('early_stopping', False)} (Patience={base_cfg.get('early_stopping_patience', 5)})")
     print(f"=======================================================\n")
 
     run_idx = 0
@@ -231,8 +251,8 @@ def run_benchmarks_from_manifest(
                             alpha_val=alpha,
                             byz_fraction=byz_f,
                             seed=seed,
-                            target_accuracy=manifest.get("target_accuracy", 0.85),
-                            log_dir=manifest.get("log_dir", "logs/phase4_results/benchmarks/")
+                            target_accuracy=target_target_acc,
+                            log_dir=base_cfg.get("log_dir", "logs/phase4_results/benchmarks/")
                         )
                         records.append(res)
                         print(f"       --> Acc={res['final_accuracy']*100:.2f}% | FRR={res['FRR']*100:.2f}% | ASR={res['ASR']*100:.2f}% | Time={res['wall_clock_seconds']:.2f}s")
