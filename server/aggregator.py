@@ -931,11 +931,11 @@ class AggregatorServer:
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
             "behavioral_profiles": {
                 cid: {
-                    "gradient_memory": [v.clone().cpu() for v in prof.gradient_memory],
+                    "gradient_memory": [v.clone().cpu() for v in list(prof.gradient_memory)[-1:]],
                     "anchor": prof.genesis_anchor.clone().cpu() if prof.genesis_anchor is not None else None,
                     "consecutive_downweights": prof.consecutive_downweights,
                     "norm_history": list(prof.norm_history),
-                    "early_vectors": [v.clone().cpu() for v in prof.early_vectors],
+                    "early_vectors": [v.clone().cpu() for v in prof.early_vectors] if prof.genesis_anchor is None else [],
                     "total_accepted": prof.total_accepted,
                 } for cid, prof in self.behavioral_memory.profiles.items()
             },

@@ -275,19 +275,25 @@ class SimulationEnvironment:
                 best_round = ckpt.get("best_round", best_round)
 
         def save_checkpoint(path: str, is_best: bool = False):
-            state = {
-                "config_hash": config_hash,
-                "model_arch": self.config.get("model_architecture", "resnet18"),
-                "round": server.round_number,
-                "update_counter": server.update_counter,
-                "best_accuracy": best_acc,
-                "best_score": best_score,
-                "best_round": best_round,
-                "accuracy_log": list(accuracy_log),
-                "server_state": server.get_state(),
-                "rng_state": torch.get_rng_state(),
-            }
-            torch.save(state, path)
+            if not self.config.get("save_checkpoints", True):
+                return
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                state = {
+                    "config_hash": config_hash,
+                    "model_arch": self.config.get("model_architecture", "resnet18"),
+                    "round": server.round_number,
+                    "update_counter": server.update_counter,
+                    "best_accuracy": best_acc,
+                    "best_score": best_score,
+                    "best_round": best_round,
+                    "accuracy_log": list(accuracy_log),
+                    "server_state": server.get_state(),
+                    "rng_state": torch.get_rng_state(),
+                }
+                torch.save(state, path)
+            except Exception as e:
+                print(f"[WARNING] Checkpoint save to {path} failed: {e}")
 
         loop_start = time.time()
         if not self.config.get("resume", False):
