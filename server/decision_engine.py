@@ -121,8 +121,9 @@ class JointDecisionEngine:
         # Multi-signal check: require BOTH directional inversion AND corroborating norm/behavior anomaly
         if sim_g is not None and sim_g < -self.theta_floor:
             sim_a = behavioral_ev.sim_anchor
-            is_anchor_minority = (behavioral_ev.behavioral_mature and sim_a is not None and sim_s is not None and 
-                                  sim_a >= self.theta_anchor_min and sim_s >= self.theta_self)
+            theta_a_eff = self._get_curriculum_anchor_threshold(current_round)
+            is_anchor_minority = (sim_a is not None and sim_a >= theta_a_eff and 
+                                  (sim_s is None or sim_s >= self.theta_self))
             if not is_anchor_minority:
                 return JointDecisionOutcome(
                     action="REJECT",

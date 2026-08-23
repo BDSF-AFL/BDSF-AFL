@@ -938,8 +938,8 @@ class AggregatorServer:
                     {
                         "client_id": e.client_id,
                         "delta_W": e.delta_W.clone().cpu(),
-                        "weight": e.weight,
-                        "timestamp": e.timestamp,
+                        "I_score": getattr(e, "I_score", 1.0),
+                        "P_score": getattr(e, "P_score", 1.0),
                         "is_warmup": getattr(e, "is_warmup", False),
                     }
                     for e in self.spatial_validator._buffer
@@ -947,7 +947,7 @@ class AggregatorServer:
             },
             "behavioral_profiles": {
                 cid: {
-                    "gradient_memory": [v.clone().cpu() for v in list(prof.gradient_memory)[-1:]],
+                    "gradient_memory": [v.clone().cpu() for v in prof.gradient_memory],
                     "anchor": prof.genesis_anchor.clone().cpu() if prof.genesis_anchor is not None else None,
                     "consecutive_downweights": prof.consecutive_downweights,
                     "norm_history": list(prof.norm_history),
@@ -987,10 +987,10 @@ class AggregatorServer:
             self.spatial_validator._buffer = deque(
                 [
                     AcceptedEntry(
-                        client_id=item["client_id"],
+                        client_id=item.get("client_id"),
                         delta_W=item["delta_W"],
-                        weight=item["weight"],
-                        timestamp=item["timestamp"],
+                        I_score=item.get("I_score", 1.0),
+                        P_score=item.get("P_score", 1.0),
                         is_warmup=item.get("is_warmup", False),
                     )
                     for item in sp_data.get("buffer", [])
