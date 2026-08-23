@@ -24,15 +24,15 @@ class ClientBehavioralProfile:
         self.consecutive_downweights: int = 0
 
     def append(self, delta_W: torch.Tensor, norm_val: float, is_downweight: bool = False) -> None:
-        """Stores unit-normalized float32 1D vector on CPU and its norm.
+        """Stores unit-normalized float16 1D vector on CPU and its norm.
         Guarantees no GPU tensors or computation graphs are retained.
         """
         vec = delta_W.detach().cpu().flatten().float()
         norm = torch.norm(vec).item()
         if norm > 1e-9:
-            unit_vec = vec / norm
+            unit_vec = (vec / norm).half()
         else:
-            unit_vec = vec
+            unit_vec = vec.half()
 
         self.gradient_memory.append(unit_vec)
         self.norm_history.append(float(norm_val))
@@ -49,17 +49,17 @@ class ClientBehavioralProfile:
         if self.genesis_anchor is None:
             self.early_vectors.append(unit_vec.clone())
             if len(self.early_vectors) >= 3:
-                centroid = torch.stack(self.early_vectors).mean(dim=0)
+                centroid = torch.stack([v.float() for v in self.early_vectors]).mean(dim=0)
                 norm_c = torch.norm(centroid).item()
                 if norm_c > 1e-9:
-                    self.genesis_anchor = centroid / norm_c
+                    self.genesis_anchor = (centroid / norm_c).half()
                 else:
                     self.genesis_anchor = unit_vec.clone()
         else:
-            updated = (1.0 - lambda_anchor) * self.genesis_anchor + lambda_anchor * unit_vec
+            updated = (1.0 - lambda_anchor) * self.genesis_anchor.float() + lambda_anchor * unit_vec.float()
             norm_u = torch.norm(updated).item()
             if norm_u > 1e-9:
-                self.genesis_anchor = updated / norm_u
+                self.genesis_anchor = (updated / norm_u).half()
 
     def compute_anchor_similarity(self, delta_W: torch.Tensor) -> Optional[float]:
         """Computes cosine similarity between candidate update and Genesis Anchor (available when depth >= 1)."""
@@ -70,9 +70,9 @@ class ClientBehavioralProfile:
         unit_vec = vec / norm
 
         if self.genesis_anchor is not None:
-            return float(torch.dot(unit_vec, self.genesis_anchor).item())
+            return float(torch.dot(unit_vec, self.genesis_anchor.float()).item())
         elif len(self.early_vectors) >= 1:
-            early_c = torch.stack(self.early_vectors).mean(dim=0)
+            early_c = torch.stack([v.float() for v in self.early_vectors]).mean(dim=0)
             c_norm = torch.norm(early_c).item()
             if c_norm > 1e-9:
                 return float(torch.dot(unit_vec, early_c / c_norm).item())
@@ -143,7 +143,7 @@ class BehavioralMemoryManager:
         else:
             unit_candidate = dW_flat / norm_raw
             # Stack stored unit vectors -> shape (|H_i|, D)
-            M = torch.stack(list(profile.gradient_memory))
+            M = torch.stack([v.float() for v in profile.gradient_memory])
             # Matrix-vector multiply for single-pass dot products
             sims = torch.mv(M, unit_candidate).numpy()
             sim_self_mean = float(np.mean(sims))

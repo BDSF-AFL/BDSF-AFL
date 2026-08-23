@@ -264,6 +264,9 @@ class SimulationEnvironment:
                 best_acc = ckpt.get("best_accuracy", best_acc)
                 best_round = ckpt.get("best_round", best_round)
                 logger.truncate_csv_at_round(server.update_counter)
+                del ckpt
+                import gc
+                gc.collect()
 
         def save_checkpoint(path: str, is_best: bool = False):
             if not self.config.get("save_checkpoints", True):
