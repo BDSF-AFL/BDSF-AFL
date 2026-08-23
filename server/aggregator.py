@@ -916,10 +916,12 @@ class AggregatorServer:
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
             "behavioral_profiles": {
                 cid: {
-                    "history": [v.clone().cpu() for v in prof.history],
+                    "gradient_memory": [v.clone().cpu() for v in prof.gradient_memory],
                     "anchor": prof.genesis_anchor.clone().cpu() if prof.genesis_anchor is not None else None,
-                    "consecutive_dw": prof.consecutive_dw,
-                    "norms": list(prof.norms),
+                    "consecutive_downweights": prof.consecutive_downweights,
+                    "norm_history": list(prof.norm_history),
+                    "early_vectors": [v.clone().cpu() for v in prof.early_vectors],
+                    "total_accepted": prof.total_accepted,
                 } for cid, prof in self.behavioral_memory.profiles.items()
             },
         }
@@ -946,12 +948,18 @@ class AggregatorServer:
                 if cid in self.rep_manager.borderline_streak:
                     self.rep_manager.borderline_streak[cid] = val
         if "behavioral_profiles" in state:
+            from collections import deque
             for cid, prof_data in state["behavioral_profiles"].items():
                 prof = self.behavioral_memory.get_or_create_profile(cid)
-                prof.history = [v.clone() for v in prof_data.get("history", [])]
+                if "gradient_memory" in prof_data:
+                    prof.gradient_memory = deque([v.clone() for v in prof_data["gradient_memory"]], maxlen=self.behavioral_memory.history_size)
                 prof.genesis_anchor = prof_data["anchor"].clone() if prof_data.get("anchor") is not None else None
-                prof.consecutive_dw = prof_data.get("consecutive_dw", 0)
-                prof.norms = list(prof_data.get("norms", []))
+                prof.consecutive_downweights = prof_data.get("consecutive_downweights", 0)
+                if "norm_history" in prof_data:
+                    prof.norm_history = deque(list(prof_data["norm_history"]), maxlen=self.behavioral_memory.history_size)
+                if "early_vectors" in prof_data:
+                    prof.early_vectors = [v.clone() for v in prof_data["early_vectors"]]
+                prof.total_accepted = prof_data.get("total_accepted", 0)
 
     def accumulate_eval_time(self, duration: float) -> None:
         """Accrues CPU execution time spent on blocking evaluations."""
