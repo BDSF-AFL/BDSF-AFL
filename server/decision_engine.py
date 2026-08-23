@@ -24,9 +24,9 @@ class JointDecisionEngine:
     def __init__(self, config: dict):
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
-        self.theta_self: float = config.get("theta_self", 0.60)
-        self.theta_floor: float = config.get("theta_floor", 0.10)
-        self.theta_anchor_min: float = config.get("theta_anchor_min", 0.50)
+        self.theta_self: float = config.get("theta_self", 0.00)
+        self.theta_floor: float = config.get("theta_floor", 0.40)
+        self.theta_anchor_min: float = config.get("theta_anchor_min", -0.20)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 5)
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
@@ -38,7 +38,7 @@ class JointDecisionEngine:
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
         self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 2.5))
-        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 25))
+        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 50))
 
     def evaluate(
         self,

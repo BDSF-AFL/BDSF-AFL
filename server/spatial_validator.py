@@ -33,7 +33,7 @@ class SpatialValidator:
 
         # Keep config reference for static_clip_C fallback
         self.config: dict = config
-        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 25))
+        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 50))
         self._unique_accepted_clients: set = set()
         self._total_accepted_count: int = 0
         

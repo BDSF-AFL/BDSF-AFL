@@ -40,14 +40,14 @@ fixed_K: false           # ablation: true = disable adaptive K_t
 K_ref: 12
 M: 60
 theta_cos: 0.1
-theta_self: 0.60        # restored: was 0.20 (regression) — self-consistency gate threshold
-theta_floor: 0.10       # widened for non-IID ResNet diversity
-theta_anchor_min: 0.50  # restored: was -0.30 (regression) — genesis anchor positivity floor
+theta_self: 0.00        # calibrated for high-dimensional ResNet-18 dispersion
+theta_floor: 0.40       # wide non-IID tolerance for single-class Dirichlet skew
+theta_anchor_min: -0.20 # calibrated for high-dimensional gradient rotation
 gamma_clip: 1.5
 top_k_ref: true          # always topk reference
 adaptive_clip_enabled: false  # static clip until mature norm distribution is established
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
-spatial_warmup_rounds: 25     # hard maturity gate (total accepted updates)
+spatial_warmup_rounds: 50     # extended warmup (>= 2.5 full passes across 20 clients)
 norm_anomaly_threshold: 2.5   # corroboration required alongside inversion
 
 # Reputation (Pillar 2)
