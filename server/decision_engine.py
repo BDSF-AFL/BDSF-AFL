@@ -181,6 +181,7 @@ class JointDecisionEngine:
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
 
+        # 3a. Mature Behavioral Downweight (depth >= 3, verified historical self-consistency)
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
             is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
@@ -197,6 +198,26 @@ class JointDecisionEngine:
                     "priority": 3,
                     "c_dw": c_dw,
                     "theta_self_eff": theta_self_eff,
+                    "alpha_eff": alpha_eff,
+                    "sim_anchor": behavioral_ev.sim_anchor,
+                    "is_minority_consistent": is_minority_consistent
+                }
+            )
+
+        # 3b. Early Transition Non-IID Downweight (depth < 3, legitimate spatial range before full profile depth)
+        is_early_self_valid = (sim_s is None or sim_s >= self.theta_self)
+        if (not behavioral_ev.behavioral_mature and is_spatial_range and
+            is_early_self_valid and is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
+            alpha_eff = self.alpha_downweight * 0.5
+            return JointDecisionOutcome(
+                action="DOWNWEIGHT",
+                primary_reason="EARLY_STAGE_NON_IID_HOLD",
+                aggregation_weight=alpha_eff * (I_i * P_i),
+                force_sync_required=False,
+                diagnostic_features={
+                    "priority": 3,
+                    "stage": "early_transition",
+                    "c_dw": c_dw,
                     "alpha_eff": alpha_eff,
                     "sim_anchor": behavioral_ev.sim_anchor,
                     "is_minority_consistent": is_minority_consistent

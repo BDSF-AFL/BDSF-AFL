@@ -387,11 +387,9 @@ class AggregatorServer:
                 self.spatial_validator.on_accept(entry)
                 self.temporal_filter.record_gap(g_i, cid)
 
-                # Option A Strict Warmup Isolation:
-                # SPATIAL_WARMUP_ACCEPT updates global model & spatial buffer,
-                # but skips behavioral memory insertion and reputation recovery.
+                # Warmup updates build the client's historical trajectory & genesis anchor
+                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False)
                 if not is_warmup:
-                    self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False)
                     self.rep_manager.record_accepted_update(cid)
                     self.rep_manager.recover(cid)
 

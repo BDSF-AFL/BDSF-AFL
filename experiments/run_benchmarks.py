@@ -82,7 +82,7 @@ def configure_algorithm(base_config: dict, algo_name: str) -> dict:
         cfg["enable_quarantine"] = True
         cfg["use_tukey"] = True
         cfg["top_k_ref"] = True
-        cfg["adaptive_clip_enabled"] = True
+        cfg["adaptive_clip_enabled"] = cfg.get("adaptive_clip_enabled", False)
         cfg["warmup_weight_factor"] = 0.5
     else:
         raise ValueError(f"Unknown algorithm: {algo_name}")
@@ -192,10 +192,17 @@ def run_benchmarks_from_manifest(
     **kwargs: Any,
 ) -> pd.DataFrame:
     """Executes the benchmark matrix specified in a manifest YAML file."""
+    # Load global defaults from config.yaml if available
+    config_yaml_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+    base_cfg = {}
+    if os.path.exists(config_yaml_path):
+        with open(config_yaml_path, "r", encoding="utf-8") as f:
+            base_cfg = yaml.safe_load(f) or {}
+
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = yaml.safe_load(f)["experiment"]
 
-    base_cfg = copy.deepcopy(manifest)
+    base_cfg.update(copy.deepcopy(manifest))
     if rounds:
         base_cfg["total_rounds"] = rounds
     else:
