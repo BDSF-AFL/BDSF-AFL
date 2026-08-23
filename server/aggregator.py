@@ -931,6 +931,20 @@ class AggregatorServer:
             "rep_history": {cid: list(h) for cid, h in self.rep_manager._history.items()},
             "spatial_streaks": dict(self.rep_manager.spatial_reject_streak),
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
+            "spatial_state": {
+                "total_accepted_count": self.spatial_validator._total_accepted_count,
+                "unique_accepted_clients": list(self.spatial_validator._unique_accepted_clients),
+                "buffer": [
+                    {
+                        "client_id": e.client_id,
+                        "delta_W": e.delta_W.clone().cpu(),
+                        "weight": e.weight,
+                        "timestamp": e.timestamp,
+                        "is_warmup": getattr(e, "is_warmup", False),
+                    }
+                    for e in self.spatial_validator._buffer
+                ],
+            },
             "behavioral_profiles": {
                 cid: {
                     "gradient_memory": [v.clone().cpu() for v in list(prof.gradient_memory)[-1:]],
@@ -964,6 +978,27 @@ class AggregatorServer:
             for cid, val in state["borderline_streaks"].items():
                 if cid in self.rep_manager.borderline_streak:
                     self.rep_manager.borderline_streak[cid] = val
+        if "spatial_state" in state:
+            sp_data = state["spatial_state"]
+            self.spatial_validator._total_accepted_count = sp_data.get("total_accepted_count", self.update_counter)
+            self.spatial_validator._unique_accepted_clients = set(sp_data.get("unique_accepted_clients", []))
+            from collections import deque
+            from shared.types import AcceptedEntry
+            self.spatial_validator._buffer = deque(
+                [
+                    AcceptedEntry(
+                        client_id=item["client_id"],
+                        delta_W=item["delta_W"],
+                        weight=item["weight"],
+                        timestamp=item["timestamp"],
+                        is_warmup=item.get("is_warmup", False),
+                    )
+                    for item in sp_data.get("buffer", [])
+                ],
+                maxlen=self.spatial_validator.M,
+            )
+        else:
+            self.spatial_validator._total_accepted_count = self.update_counter
         if "behavioral_profiles" in state:
             from collections import deque
             for cid, prof_data in state["behavioral_profiles"].items():
