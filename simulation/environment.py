@@ -166,7 +166,7 @@ class SimulationEnvironment:
         
         # 3. Create Logger
         mode = self.config.get("decision_mode", "joint")
-        run_id = f"{mode}_{self.attack_type}_{self.seed}"
+        run_id = self.config.get("run_id", f"{mode}_{self.attack_type}_{self.seed}")
         logger = BDSFLogger(run_id=run_id, config=self.config)
         
         # 4. Construct AggregatorServer
@@ -249,9 +249,8 @@ class SimulationEnvironment:
         
         # Checkpointing & Convergence Configuration
         log_dir = self.config.get("log_dir", "logs/")
-        ckpt_dir = os.path.join(log_dir, "checkpoints")
+        ckpt_dir = self.config.get("checkpoint_dir", os.path.join(log_dir, "checkpoints"))
         os.makedirs(ckpt_dir, exist_ok=True)
-        run_id = self.config.get("run_id", f"run_{int(time.time())}")
         config_hash = hashlib.sha256(str(sorted(self.config.items())).encode("utf-8")).hexdigest()[:16]
         
         patience = int(self.config.get("early_stopping_patience", 5))

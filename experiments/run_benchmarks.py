@@ -210,7 +210,7 @@ def run_benchmarks_from_manifest(
     if patience is not None:
         base_cfg["early_stopping_patience"] = patience
     if checkpoint_dir:
-        base_cfg["log_dir"] = checkpoint_dir
+        base_cfg["checkpoint_dir"] = checkpoint_dir
     for k, v in kwargs.items():
         base_cfg[k] = v
 
