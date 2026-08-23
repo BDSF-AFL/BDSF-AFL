@@ -40,23 +40,27 @@ class DataPartitioner:
 
         if self.dataset_name == "MNIST":
             candidates = [
+                "./data/MNIST",
+                "./data",
+                "data/MNIST",
+                "data",
                 "/kaggle/input/mnist-dataset",
                 "/kaggle/input/mnist",
                 "/kaggle/input/mnist-data",
                 "/kaggle/input/digit-recognizer",
-                "./data/MNIST",
-                "./data"
             ]
         else:  # CIFAR10
             candidates = [
+                "./data/cifar-10-batches-py",
+                "./data",
+                "data/cifar-10-batches-py",
+                "data",
                 "/kaggle/input/datasets/pankrzysiu/cifar10-python/cifar-10-batches-py",
                 "/kaggle/input/datasets/pankrzysiu/cifar10-python",
                 "/kaggle/input/cifar10-python/cifar-10-batches-py",
                 "/kaggle/input/cifar10-python",
                 "/kaggle/input/cifar10/cifar-10-batches-py",
                 "/kaggle/input/cifar10",
-                "./data/cifar-10-batches-py",
-                "./data"
             ]
 
         for cand in candidates:
