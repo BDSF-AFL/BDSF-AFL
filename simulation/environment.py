@@ -251,8 +251,27 @@ class SimulationEnvironment:
         
         # Resume Checkpoint if requested
         if self.config.get("resume", False):
-            ckpt_path = self.config.get("resume_checkpoint_path", os.path.join(ckpt_dir, f"{run_id}_latest.pt"))
-            if os.path.exists(ckpt_path):
+            candidate_paths = [
+                self.config.get("resume_checkpoint_path"),
+                os.path.join(ckpt_dir, f"{run_id}_latest.pt"),
+                os.path.join(ckpt_dir, f"{run_id}_best.pt"),
+                os.path.join("logs/checkpoints/resnet_cifar10", f"{run_id}_latest.pt"),
+                os.path.join("logs/checkpoints/resnet_cifar10", f"{run_id}_best.pt"),
+                os.path.join("logs/checkpoints", f"{run_id}_latest.pt"),
+                os.path.join("logs/checkpoints", f"{run_id}_best.pt"),
+                os.path.join(log_dir, "checkpoints", f"{run_id}_latest.pt"),
+            ]
+            import glob
+            found_glob = glob.glob(f"**/{run_id}*.pt", recursive=True)
+            candidate_paths.extend(found_glob)
+            
+            ckpt_path = None
+            for p in candidate_paths:
+                if p and os.path.exists(p):
+                    ckpt_path = p
+                    break
+
+            if ckpt_path:
                 print(f"[CHECKPOINT] Resuming from checkpoint: {ckpt_path}")
                 ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
                 saved_hash = ckpt.get("config_hash")
@@ -267,6 +286,8 @@ class SimulationEnvironment:
                 del ckpt
                 import gc
                 gc.collect()
+            else:
+                print(f"[CHECKPOINT] Resume requested, but no checkpoint found for {run_id} (searched in {ckpt_dir} and logs/checkpoints/) - starting from Round 0.")
 
         def save_checkpoint(path: str, is_best: bool = False):
             if not self.config.get("save_checkpoints", True):
