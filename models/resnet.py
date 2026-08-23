@@ -62,6 +62,17 @@ class CIFAR10ResNet18(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * BasicBlock.expansion, num_classes)
 
+        # Standard Kaiming initialization for deep convolutional networks
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.GroupNorm):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                nn.init.constant_(m.bias, 0.0)
+
     def _make_layer(self, block: type, planes: int, num_blocks: int, stride: int) -> nn.Sequential:
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
