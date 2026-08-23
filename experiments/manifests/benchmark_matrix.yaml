@@ -7,9 +7,11 @@ experiment:
   local_epochs: 2
   lr: 0.01
   N_clients: 20
-  M: 20
+  M: 60
   K_base: 50
-  K_ref: 10
+  K_ref: 6
+  theta_self: 0.20
+  theta_anchor_min: 0.20
 
   algorithms:
     - "FedAvg"
