@@ -301,9 +301,6 @@ class SimulationEnvironment:
             logger.log_metric(round=0, metric_name="val_loss", value=init_loss)
 
         async def run_loop():
-            # Dedicated background loop: drains any pending forced-sync queues
-            # without blocking client local training tasks.
-            drain_task = asyncio.create_task(server.drain_force_sync_queue(clients))
             stop_event = asyncio.Event()
 
             async def client_task(client):
@@ -407,7 +404,6 @@ class SimulationEnvironment:
             # Signal all client tasks to stop after their current round completes.
             stop_event.set()
             await asyncio.gather(*tasks, return_exceptions=True)
-            drain_task.cancel()
 
         # Run the true-async loop
         try:
