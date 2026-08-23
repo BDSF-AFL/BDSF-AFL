@@ -254,20 +254,24 @@ class SimulationEnvironment:
             candidate_paths = [
                 self.config.get("resume_checkpoint_path"),
                 os.path.join(ckpt_dir, f"{run_id}_latest.pt"),
-                os.path.join(ckpt_dir, f"{run_id}_best.pt"),
                 os.path.join("logs/checkpoints/resnet_cifar10", f"{run_id}_latest.pt"),
-                os.path.join("logs/checkpoints/resnet_cifar10", f"{run_id}_best.pt"),
+                os.path.join("/kaggle/working/logs/checkpoints/resnet_cifar10", f"{run_id}_latest.pt"),
                 os.path.join("logs/checkpoints", f"{run_id}_latest.pt"),
-                os.path.join("logs/checkpoints", f"{run_id}_best.pt"),
+                os.path.join("/kaggle/working/logs/checkpoints", f"{run_id}_latest.pt"),
                 os.path.join(log_dir, "checkpoints", f"{run_id}_latest.pt"),
+                os.path.join(ckpt_dir, f"{run_id}_best.pt"),
+                os.path.join("logs/checkpoints/resnet_cifar10", f"{run_id}_best.pt"),
+                os.path.join("/kaggle/working/logs/checkpoints/resnet_cifar10", f"{run_id}_best.pt"),
+                os.path.join("logs/checkpoints", f"{run_id}_best.pt"),
             ]
             import glob
-            found_glob = glob.glob(f"**/{run_id}*.pt", recursive=True)
-            candidate_paths.extend(found_glob)
+            # Match any latest.pt files first
+            candidate_paths.extend(glob.glob(f"**/{run_id}*latest*.pt", recursive=True))
+            candidate_paths.extend(glob.glob(f"**/{run_id}*.pt", recursive=True))
             
             ckpt_path = None
             for p in candidate_paths:
-                if p and os.path.exists(p):
+                if p and os.path.exists(p) and os.path.isfile(p):
                     ckpt_path = p
                     break
 
