@@ -363,7 +363,7 @@ class AggregatorServer:
             )
 
             delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
-            eta = self.config.get("eta", 0.01)
+            eta = self.config.get("eta", 1.0)
 
             # 1. Handle ACCEPT Action (Full Consensus / Warm-Up)
             if outcome.action == "ACCEPT":
