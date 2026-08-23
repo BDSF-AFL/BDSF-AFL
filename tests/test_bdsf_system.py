@@ -130,14 +130,39 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(out1.action, "REJECT")
         self.assertEqual(out1.primary_reason, "HARD_GUARD_GLOBAL_INVERSION")
 
-        # Priority 2: Full Consensus
+        # Priority 2: Full Consensus (Mature Honest Node)
         spat_ev.sim_global = 0.85
         behav_ev.sim_self_mean = 0.90
         behav_ev.history_depth = 5
         behav_ev.sim_anchor = 0.90
         out2 = engine.evaluate(2, temp_ev, spat_ev, behav_ev, 1.0, 1.0)
         self.assertEqual(out2.action, "ACCEPT")
+        self.assertEqual(out2.primary_reason, "FULL_CONSENSUS_ACCEPT")
         self.assertEqual(out2.aggregation_weight, 1.0)
+
+        # Priority 2 Defense: S2 Mimicry Attack (Mature Attacker Evasion Blocked)
+        # Attacker maintains sim_global >= 0.10, but fails temporal identity (sim_self < 0.35 & sim_anchor < 0.40)
+        behav_ev_mimic = BehavioralEvidence(
+            sim_self_mean=0.12,
+            sim_self_max=0.18,
+            norm_deviation_self=0.5,
+            cadence_consistency=0.9,
+            history_depth=5,
+            sim_anchor=0.25,
+        )
+        spat_ev_mimic = SpatialEvidence(
+            sim_global=0.15,  # evades snapshot spatial check (0.15 >= 0.10)
+            norm_raw=0.30,
+            norm_clipped=0.30,
+            norm_ratio_median=1.0,
+            dynamic_bound_C=2.0,
+            reference_available=True,
+            spatial_mature=True,
+        )
+        out_mimic = engine.evaluate(3, temp_ev, spat_ev_mimic, behav_ev_mimic, 1.0, 1.0)
+        self.assertEqual(out_mimic.action, "REJECT")
+        self.assertEqual(out_mimic.aggregation_weight, 0.0)
+        self.assertEqual(out_mimic.primary_reason, "UNCOORDINATED_OR_ADVERSARIAL_REJECT")
 
     # =========================================================================
     # 4. REPUTATION MECHANICS & MATHEMATICAL INVARIANTS

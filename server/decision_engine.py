@@ -25,8 +25,10 @@ class JointDecisionEngine:
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
         self.theta_self: float = config.get("theta_self", 0.00)
+        self.theta_self_mature: float = config.get("theta_self_mature", 0.35)
         self.theta_floor: float = config.get("theta_floor", 0.40)
         self.theta_anchor_min: float = config.get("theta_anchor_min", -0.20)
+        self.theta_anchor_mature: float = config.get("theta_anchor_mature", 0.40)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 5)
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
@@ -108,24 +110,17 @@ class JointDecisionEngine:
             is_anchor_minority = (behavioral_ev.behavioral_mature and sim_a is not None and sim_s is not None and 
                                   sim_a >= self.theta_anchor_min and sim_s >= self.theta_self)
             if not is_anchor_minority:
-                norm_ratio = spatial_ev.norm_ratio_median
-                has_norm_anomaly = (norm_ratio is not None and norm_ratio > self.norm_anomaly_threshold)
-                has_behavior_anomaly = (behavioral_ev.behavioral_mature and sim_s is not None
-                                        and sim_s < (self.theta_self - 0.20))
-                if has_norm_anomaly or has_behavior_anomaly:
-                    return JointDecisionOutcome(
-                        action="REJECT",
-                        primary_reason="HARD_GUARD_GLOBAL_INVERSION",
-                        aggregation_weight=0.0,
-                        force_sync_required=False,
-                        diagnostic_features={
-                            "priority": 1,
-                            "violation": "sim_global < -theta_floor + corroboration",
-                            "sim_g": sim_g,
-                            "has_norm_anomaly": has_norm_anomaly,
-                            "has_behavior_anomaly": has_behavior_anomaly,
-                        }
-                    )
+                return JointDecisionOutcome(
+                    action="REJECT",
+                    primary_reason="HARD_GUARD_GLOBAL_INVERSION",
+                    aggregation_weight=0.0,
+                    force_sync_required=False,
+                    diagnostic_features={
+                        "priority": 1,
+                        "violation": "sim_global < -theta_floor",
+                        "sim_g": sim_g,
+                    }
+                )
 
         # 1b. Extreme Temporal Violations (Gated strictly by temporal maturity)
         if temporal_ev.temporal_mature and g_margin > self.delta_temp_mod:
@@ -150,17 +145,28 @@ class JointDecisionEngine:
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
-        is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
+        if behavioral_ev.behavioral_mature:
+            is_self_valid = (sim_s is not None and sim_s >= self.theta_self_mature)
+            is_anchor_valid = (behavioral_ev.sim_anchor is not None and behavioral_ev.sim_anchor >= self.theta_anchor_mature)
+        else:
+            is_self_valid = (sim_s is None or sim_s >= self.theta_self)
+            is_anchor_valid = True
+
         # Tolerate minor inter-batch GPU/thread timing jitter (g_margin <= 0.20) when spatial & self agreement are strong
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
 
-        if is_spatial_valid and is_self_valid and is_temporal_valid:
+        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
                 aggregation_weight=1.0 * (I_i * P_i),
                 force_sync_required=False,
-                diagnostic_features={"priority": 2, "sim_g": sim_g, "sim_s": sim_s}
+                diagnostic_features={
+                    "priority": 2,
+                    "sim_g": sim_g,
+                    "sim_s": sim_s,
+                    "sim_anchor": behavioral_ev.sim_anchor
+                }
             )
 
         # ---------------------------------------------------------------------

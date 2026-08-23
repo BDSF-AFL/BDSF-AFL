@@ -17,11 +17,13 @@ experiment:
   eta: 0.10
   server_momentum: 0.50
   theta_self: 0.00
+  theta_self_mature: 0.35
   theta_floor: 0.40
   theta_anchor_min: -0.20
+  theta_anchor_mature: 0.40
   adaptive_clip_enabled: false
   static_clip_C: 10.0
-  spatial_warmup_rounds: 50
+  spatial_warmup_rounds: 17
   norm_anomaly_threshold: 2.5
 
   algorithms:
