@@ -394,7 +394,7 @@ class SimulationEnvironment:
                             I_i=I_val, P_i=P_val, is_byzantine=is_byz,
                         )
                     server.rep_manager.log_round(u)
-                    next_eval_at += eval_every_updates
+                    next_eval_at = max(next_eval_at + eval_every_updates, ((server.update_counter // eval_every_updates) + 1) * eval_every_updates)
 
                     # Early stopping check based on consecutive evaluation checkpoints
                     if self.config.get("early_stopping", False) and evals_without_improvement >= patience:
