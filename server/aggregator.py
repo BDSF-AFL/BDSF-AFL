@@ -624,8 +624,11 @@ class AggregatorServer:
                 )
                 self.consecutive_rejects += 1
                 if self.consecutive_rejects >= self.deadlock_threshold:
-                    # Deadlock Watchdog: Flush stale spatial reference buffer to re-align with live population
-                    self.spatial_validator.reset_buffer()
+                    # Watchdog: deadlock prevention is now handled by correct threshold calibration
+                    # (Fix F1 in decision_engine.py). reset_buffer() was an exploit surface —
+                    # coordinated Byzantine clients could trigger N consecutive rejects to wipe
+                    # the spatial reference and inject during the blind rebuild window.
+                    # Counter is reset for metrics tracking only; buffer is NOT flushed.
                     self.consecutive_rejects = 0
 
                 return {

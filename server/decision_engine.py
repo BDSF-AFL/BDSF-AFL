@@ -24,9 +24,9 @@ class JointDecisionEngine:
     def __init__(self, config: dict):
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
-        self.theta_self: float = config.get("theta_self", 0.20)
-        self.theta_floor: float = config.get("theta_floor", 0.50)
-        self.theta_anchor_min: float = config.get("theta_anchor_min", -0.30)
+        self.theta_self: float = config.get("theta_self", 0.60)
+        self.theta_floor: float = config.get("theta_floor", 0.15)
+        self.theta_anchor_min: float = config.get("theta_anchor_min", 0.50)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 5)
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
@@ -156,9 +156,10 @@ class JointDecisionEngine:
         is_minority_consistent = (sim_a is not None and sim_a >= anchor_manifold_bound)
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
-        is_spatial_range = (sim_g is None or sim_g >= -self.theta_floor or is_minority_consistent)
-        is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= theta_self_eff)
-        if (is_spatial_range and is_self_valid and
+        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
+
+        if (behavioral_ev.behavioral_mature and is_spatial_range and
+            sim_s is not None and sim_s >= theta_self_eff and
             is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
             
             # Confidence-weighted attenuation factor

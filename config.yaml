@@ -40,9 +40,9 @@ fixed_K: false           # ablation: true = disable adaptive K_t
 K_ref: 6
 M: 60
 theta_cos: 0.1
-theta_self: 0.20
-theta_floor: 0.50
-theta_anchor_min: -0.30
+theta_self: 0.60        # restored: was 0.20 (regression) — self-consistency gate threshold
+theta_floor: 0.15       # restored: was 0.50 (regression) — hard-guard inversion floor
+theta_anchor_min: 0.50  # restored: was -0.30 (regression) — genesis anchor positivity floor
 gamma_clip: 1.5
 top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true

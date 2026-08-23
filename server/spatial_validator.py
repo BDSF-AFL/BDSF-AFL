@@ -190,15 +190,24 @@ class SpatialValidator:
 
     def _build_reference_stats(self) -> tuple[Optional[torch.Tensor], int, float]:
         """Builds Top-K reference vector, counts positive entries, and computes spatial coherence."""
-        # Deduplicate buffer to keep the latest entry per distinct client.
-        # This prevents a single fast client from monopolizing the reference centroid.
-        latest_per_client = {}
+        # Build valid entry set.
+        # Deduplication (keep latest per client) is opt-in via config["deduplicate_spatial_ref"].
+        # Default OFF to match debug branch — all recent valid entries contribute to the centroid.
+        # Enabling this shifts centroid toward rare-class clients under extreme non-IID (alpha=0.1),
+        # which can ease mimicry threshold satisfaction for S2_MIMICRY attackers.
+        raw_entries = []
         for e in self._buffer:
             gnorm = torch.norm(e.delta_W.flatten().float()).item()
             if np.isfinite(gnorm) and gnorm > EPS:
-                latest_per_client[e.client_id] = e
+                raw_entries.append(e)
 
-        valid_entries = list(latest_per_client.values())
+        if self.config.get("deduplicate_spatial_ref", False):
+            latest_per_client = {}
+            for e in raw_entries:
+                latest_per_client[e.client_id] = e
+            valid_entries = list(latest_per_client.values())
+        else:
+            valid_entries = raw_entries
         ref_count = len(valid_entries)
         if ref_count < self.K_ref:
             return None, ref_count, 0.0
