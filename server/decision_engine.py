@@ -40,7 +40,20 @@ class JointDecisionEngine:
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
         self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 2.5))
-        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 50))
+        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 20))
+
+    def _get_curriculum_anchor_threshold(self, current_round: int) -> float:
+        """Adaptive Curriculum Anchor Schedule matching optimization phases:
+           - Exploration / Feature Discovery (Round < 20): theta_anchor = -0.20 (gentle)
+           - Manifold Stabilization (Round 20-49): theta_anchor = 0.20 (intermediate)
+           - Mature Convergence (Round >= 50): theta_anchor = 0.40 (full strength)
+        """
+        if current_round < self.spatial_warmup_rounds:
+            return self.theta_anchor_min  # -0.20
+        elif current_round < 50:
+            return 0.20
+        else:
+            return self.theta_anchor_mature  # 0.40
 
     def evaluate(
         self,
@@ -50,6 +63,7 @@ class JointDecisionEngine:
         behavioral_ev: BehavioralEvidence,
         I_i: float,
         P_i: float,
+        current_round: int = 0,
     ) -> JointDecisionOutcome:
         """Deterministically evaluates candidate update evidence against Priority 0-5 hierarchy."""
         
@@ -145,9 +159,10 @@ class JointDecisionEngine:
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
+        theta_a_eff = self._get_curriculum_anchor_threshold(current_round)
         if behavioral_ev.behavioral_mature:
             is_self_valid = (sim_s is not None and sim_s >= self.theta_self_mature)
-            is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
+            is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= theta_a_eff)
         else:
             is_self_valid = (sim_s is None or sim_s >= self.theta_self)
             is_anchor_valid = True

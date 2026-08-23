@@ -357,6 +357,7 @@ class AggregatorServer:
         # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
         # --------------------------------------------------------------
         if self.decision_mode == "joint":
+            eff_round = self.round_number // max(1, self.config.get("N_clients", 20))
             outcome = self.decision_engine.evaluate(
                 cid=cid,
                 temporal_ev=temporal_evidence,
@@ -364,6 +365,7 @@ class AggregatorServer:
                 behavioral_ev=behavioral_evidence,
                 I_i=I_i,
                 P_i=P_i,
+                current_round=eff_round,
             )
 
             delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
