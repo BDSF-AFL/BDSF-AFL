@@ -186,12 +186,15 @@ class SpatialValidator:
 
     def _build_reference_stats(self) -> tuple[Optional[torch.Tensor], int, float]:
         """Builds Top-K reference vector, counts positive entries, and computes spatial coherence."""
-        valid_entries = []
+        # Deduplicate buffer to keep the latest entry per distinct client.
+        # This prevents a single fast client from monopolizing the reference centroid.
+        latest_per_client = {}
         for e in self._buffer:
             gnorm = torch.norm(e.delta_W.flatten().float()).item()
             if np.isfinite(gnorm) and gnorm > EPS:
-                valid_entries.append(e)
+                latest_per_client[e.client_id] = e
 
+        valid_entries = list(latest_per_client.values())
         ref_count = len(valid_entries)
         if ref_count < self.K_ref:
             return None, ref_count, 0.0

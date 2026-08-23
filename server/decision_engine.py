@@ -154,14 +154,11 @@ class JointDecisionEngine:
         sim_mad = behavioral_ev.sim_self_mad if behavioral_ev.sim_self_mad is not None else 0.05
         anchor_manifold_bound = max(self.theta_anchor_min, (sim_s - 1.5 * (1.4826 * sim_mad + 1e-6))) if sim_s is not None else self.theta_anchor_min
         is_minority_consistent = (sim_a is not None and sim_a >= anchor_manifold_bound)
-        
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
-        # Spatial range: supports non-IID minority (sim_g < theta_cos) AND high consensus with moderate temporal jitter (sim_g >= theta_cos)
-        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
-
-        if (behavioral_ev.behavioral_mature and is_spatial_range and
-            sim_s is not None and sim_s >= theta_self_eff and
+        is_spatial_range = (sim_g is None or sim_g >= -self.theta_floor or is_minority_consistent)
+        is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= theta_self_eff)
+        if (is_spatial_range and is_self_valid and
             is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
             
             # Confidence-weighted attenuation factor
