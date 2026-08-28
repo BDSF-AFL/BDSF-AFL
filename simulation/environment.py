@@ -363,17 +363,18 @@ class SimulationEnvironment:
 
                 # --- Lightweight per-round progress (every effective round) ---
                 if eff_round > last_progress_at:
+                    for r in range(last_progress_at + 1, min(eff_round + 1, total_rounds + 1)):
+                        elapsed = time.time() - loop_start
+                        n_rejected = sum(1 for e in logger.get_rejection_log() if e.get("status") == "REJECT")
+                        pct = 100.0 * (r * N) / total_updates
+                        print(
+                            f"  Round {r:>3}/{total_rounds} "
+                            f"| updates={r*N:>5}/{total_updates} ({pct:5.1f}%) "
+                            f"| rejected={n_rejected:>4} "
+                            f"| elapsed={elapsed:6.1f}s",
+                            flush=True,
+                        )
                     last_progress_at = eff_round
-                    elapsed = time.time() - loop_start
-                    n_rejected = sum(1 for e in logger.get_rejection_log() if e.get("status") == "REJECT")
-                    pct = 100.0 * u / total_updates
-                    print(
-                        f"  Round {eff_round:>3}/{total_rounds} "
-                        f"| updates={u:>5}/{total_updates} ({pct:5.1f}%) "
-                        f"| rejected={n_rejected:>4} "
-                        f"| elapsed={elapsed:6.1f}s",
-                        flush=True,
-                    )
 
                 if u >= next_eval_at:
                     u = server.update_counter
