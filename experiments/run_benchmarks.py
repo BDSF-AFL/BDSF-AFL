@@ -187,6 +187,7 @@ def run_benchmarks_from_manifest(
     early_stopping: Optional[bool] = None,
     target_accuracy: Optional[float] = None,
     patience: Optional[int] = None,
+    min_early_stop_round: Optional[int] = None,
     save_checkpoints: Optional[bool] = None,
     checkpoint_dir: Optional[str] = None,
     **kwargs: Any,
@@ -216,6 +217,8 @@ def run_benchmarks_from_manifest(
         base_cfg["early_stopping"] = early_stopping
     if patience is not None:
         base_cfg["early_stopping_patience"] = patience
+    if min_early_stop_round is not None:
+        base_cfg["min_early_stop_round"] = min_early_stop_round
     if checkpoint_dir:
         base_cfg["checkpoint_dir"] = checkpoint_dir
     for k, v in kwargs.items():

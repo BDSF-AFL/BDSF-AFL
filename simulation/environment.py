@@ -243,7 +243,8 @@ class SimulationEnvironment:
         os.makedirs(ckpt_dir, exist_ok=True)
         config_hash = hashlib.sha256(str(sorted(self.config.items())).encode("utf-8")).hexdigest()[:16]
         
-        patience = int(self.config.get("early_stopping_patience", 5))
+        patience = int(self.config.get("early_stopping_patience", 10))
+        min_early_stop_round = int(self.config.get("min_early_stop_round", 100))
         evals_without_improvement = 0
         best_score = -float("inf")
         best_acc = 0.0
@@ -420,11 +421,13 @@ class SimulationEnvironment:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
 
-                    # Early stopping check based on consecutive evaluation checkpoints
-                    if self.config.get("early_stopping", False) and evals_without_improvement >= patience:
+                    # Early stopping check: only active if enabled, round >= min_early_stop_round, and sustained plateau for patience evals
+                    curr_round = u // N
+                    if self.config.get("early_stopping", False) and curr_round >= min_early_stop_round and evals_without_improvement >= patience:
                         print(
-                            f"\n[EARLY STOPPING] Convergence plateau reached: no score gain for {patience} evals "
-                            f"({patience * (eval_every_updates // N)} rounds). Optimal model saved: Best Acc = {best_acc:.4f} at Round {best_round}.",
+                            f"\n[EARLY STOPPING] Convergence plateau reached: no score gain for {patience} consecutive evals "
+                            f"({patience * (eval_every_updates // N)} rounds) after minimum threshold Round {min_early_stop_round}. "
+                            f"Optimal model saved: Best Acc = {best_acc:.4f} at Round {best_round}.",
                             flush=True,
                         )
                         break

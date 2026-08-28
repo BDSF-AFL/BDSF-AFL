@@ -26,8 +26,9 @@ fedprox_mu: 0.01             # proximal regularization to bound non-IID trajecto
 eta: 0.10                   # calibrated server learning rate for 20-client asynchronous aggregation
 server_momentum: 0.50                # Momentum-enhanced asynchronous aggregation (FedAvgM)
 model_architecture: "resnet18"       # resnet18 (CIFAR-10 Adapted) | cnn (Legacy baseline) | mlp (MNIST)
-early_stopping: true                 # Automated convergence stopping
-early_stopping_patience: 5           # Consecutive evaluations without gain before early stopping
+early_stopping: false                # Automated convergence stopping
+early_stopping_patience: 10          # Consecutive evaluations without gain before early stopping (10 evals = 100 rounds)
+min_early_stop_round: 100            # Never trigger early stopping before Round 100
 checkpoint_every: 5                  # Checkpoint frequency (evaluations)
 resume: false                        # Resume from saved checkpoint
 
