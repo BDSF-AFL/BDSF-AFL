@@ -78,15 +78,27 @@ class JointDecisionEngine:
         v_lag = version_lag if version_lag != 0 else getattr(temporal_ev, "version_lag", 0)
         sim_frozen = getattr(behavioral_ev, "sim_frozen_anchor", None)
         drift_a = getattr(behavioral_ev, "anchor_drift", None)
-
-        # Multi-Round Suspicion Accumulator & Temporal Residual Autocorrelation (TRA)
+        # Multi-Round Suspicion Accumulator & Multi-Pillar Incoherence
         tra = spatial_ev.tra_score
         oer = spatial_ev.oer_score
-        if spatial_ev.spatial_mature and tra is not None:
-            # If residual has high orthogonal energy AND near-zero autocorrelation across rounds:
-            if tra < self.theta_tra and (oer is not None and oer >= 0.65):
+        prc = spatial_ev.prc_score
+        norm_ratio = spatial_ev.norm_ratio_median
+
+        if spatial_ev.spatial_mature:
+            is_suspicious = False
+            # 1. Low temporal autocorrelation on orthogonal residual
+            if tra is not None and tra < self.theta_tra and (oer is not None and oer >= 0.65):
+                is_suspicious = True
+            # 2. Inflated norm ratio without high global consensus
+            if norm_ratio is not None and norm_ratio > self.norm_anomaly_threshold and (sim_g is None or sim_g < self.theta_cos):
+                is_suspicious = True
+            # 3. Complete cross-client residual incoherence
+            if prc is not None and prc < self.theta_prc and (sim_g is None or sim_g < self.theta_cos):
+                is_suspicious = True
+
+            if is_suspicious:
                 self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
-            elif tra >= self.theta_tra or (sim_g is not None and sim_g >= 0.35):
+            elif (sim_g is not None and sim_g >= self.theta_cos) and (prc is None or prc >= self.theta_prc):
                 self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
         S_i = self.suspicion_scores.get(cid, 0.0)
         spatial_ev.suspicion_score = S_i
@@ -263,10 +275,14 @@ class JointDecisionEngine:
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
         # Spatial range: supports non-IID minority (sim_g < theta_cos) AND high consensus with moderate temporal jitter (sim_g >= theta_cos)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
+        # Multi-pillar guards for non-IID downweight qualification
+        is_prc_valid_p3 = (prc is None or prc >= self.theta_prc)
+        is_norm_valid_p3 = (spatial_ev.norm_ratio_median is None or spatial_ev.norm_ratio_median <= self.norm_anomaly_threshold)
 
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
-            is_anchor_valid_p3 and is_drift_bounded and is_temporal_tolerable):
+            is_anchor_valid_p3 and is_drift_bounded and is_temporal_tolerable and
+            is_prc_valid_p3 and is_norm_valid_p3):
             
             # If persistent multi-round suspicion has accumulated, reject without downweighting
             if S_i >= self.suspicion_reject_thresh:
@@ -335,7 +351,8 @@ class JointDecisionEngine:
         # 3b. Early Transition Non-IID Downweight (depth < 3, legitimate spatial range before full profile depth)
         is_early_self_valid = (sim_s is None or sim_s >= self.theta_self)
         if (not behavioral_ev.behavioral_mature and is_spatial_range and
-            is_early_self_valid and is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
+            is_early_self_valid and is_anchor_valid and is_drift_bounded and is_temporal_tolerable and
+            is_prc_valid_p3 and is_norm_valid_p3):
             alpha_eff = self.alpha_downweight * 0.5
             return JointDecisionOutcome(
                 action="DOWNWEIGHT",
@@ -358,9 +375,17 @@ class JointDecisionEngine:
             )
 
         # ---------------------------------------------------------------------
-        # PRIORITY 5: Adversarial / Inconsistent Fallthrough (REJECT)
+        # PRIORITY 5: Adversarial / Inconsistent Fallthrough (REJECT & SLASH)
         # ---------------------------------------------------------------------
-        primary_reason = "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT" if S_i >= self.suspicion_reject_thresh else "UNCOORDINATED_OR_ADVERSARIAL_REJECT"
+        if spatial_ev.norm_ratio_median is not None and spatial_ev.norm_ratio_median > self.norm_anomaly_threshold:
+            primary_reason = "SPATIAL_NORM_ANOMALY_REJECT"
+        elif prc is not None and prc < self.theta_prc:
+            primary_reason = "SPATIAL_COHERENCE_REJECT"
+        elif S_i >= self.suspicion_reject_thresh:
+            primary_reason = "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT"
+        else:
+            primary_reason = "UNCOORDINATED_OR_ADVERSARIAL_REJECT"
+
         return JointDecisionOutcome(
             action="REJECT",
             primary_reason=primary_reason,
@@ -375,6 +400,7 @@ class JointDecisionEngine:
                 "anchor_drift": drift_a,
                 "version_lag": v_lag,
                 "tra_score": tra,
+                "prc_score": prc,
                 "suspicion_score": S_i,
             }
         )

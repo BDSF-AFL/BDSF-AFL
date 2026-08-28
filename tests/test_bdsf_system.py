@@ -686,10 +686,11 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(outcome_honest.primary_reason, "FULL_CONSENSUS_ACCEPT")
         self.assertEqual(outcome_honest.aggregation_weight, 1.0)
         
-        # S2 fails P2 gate (is_prc_valid=False) and is demoted to P3 DOWNWEIGHT
+        # S2 fails P2 and P3 gates (is_prc_valid=False) and is rejected and slashed under Priority 5
         outcome_s2 = engine.evaluate(5, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
-        self.assertEqual(outcome_s2.action, "DOWNWEIGHT")
-        self.assertLess(outcome_s2.aggregation_weight, 0.50)
+        self.assertEqual(outcome_s2.action, "REJECT")
+        self.assertEqual(outcome_s2.primary_reason, "SPATIAL_COHERENCE_REJECT")
+        self.assertEqual(outcome_s2.aggregation_weight, 0.0)
 
     def test_temporal_residual_autocorrelation_and_progressive_suspicion(self):
         """Validates that Temporal Residual Autocorrelation (TRA) and the Multi-Round Suspicion
