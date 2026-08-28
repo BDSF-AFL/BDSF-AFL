@@ -595,6 +595,7 @@ class AggregatorServer:
                     sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
+                    prc_score=spatial_evidence.prc_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 return {
