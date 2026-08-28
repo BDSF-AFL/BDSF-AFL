@@ -61,7 +61,14 @@ class JointDecisionEngine:
         """Deterministically evaluates candidate update evidence against Priority 0-5 hierarchy."""
         
         sim_g = spatial_ev.sim_global
-        sim_s = behavioral_ev.sim_self_mean
+        sim_s_mean = behavioral_ev.sim_self_mean
+        sim_s_max = behavioral_ev.sim_self_max
+        if sim_s_mean is not None and sim_s_max is not None:
+            sim_s = max(sim_s_mean, sim_s_max)
+        elif sim_s_mean is not None:
+            sim_s = sim_s_mean
+        else:
+            sim_s = sim_s_max
         norm_r = spatial_ev.norm_raw
         C_t = spatial_ev.dynamic_bound_C if spatial_ev.dynamic_bound_C is not None else self.static_clip_C
         g_margin = temporal_ev.fence_margin

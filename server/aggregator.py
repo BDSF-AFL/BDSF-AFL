@@ -423,6 +423,23 @@ class AggregatorServer:
                     if q_act == "ACCEPT":
                         q_w = q_age_mult * (q_entry.reputation_at_entry[0] * q_entry.reputation_at_entry[1])
                         self._apply_global_update(eta * q_w * q_entry.delta_W_clipped)
+                        q_acc_entry = AcceptedEntry(
+                            delta_W=q_entry.delta_W_clipped.clone(),
+                            I_score=q_entry.reputation_at_entry[0],
+                            P_score=q_entry.reputation_at_entry[1],
+                            client_id=q_entry.client_id,
+                            is_warmup=False,
+                        )
+                        self.accepted_buffer.append(q_acc_entry)
+                        self.spatial_validator.on_accept(q_acc_entry)
+                        self.spatial_validator.record_residual(q_entry.client_id, q_entry.delta_W_clipped)
+                        self.behavioral_memory.on_accept(
+                            client_id=q_entry.client_id,
+                            delta_W=q_entry.delta_W_clipped,
+                            is_downweight=False,
+                        )
+                        self.rep_manager.record_accepted_update(q_entry.client_id)
+                        self.rep_manager.recover(q_entry.client_id)
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
