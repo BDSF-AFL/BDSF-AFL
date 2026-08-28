@@ -52,7 +52,7 @@ gamma_clip: 1.2              # tightened from 1.5 — ensures adaptive clipping 
 top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true  # dynamic adaptive norm clipping
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
-spatial_warmup_rounds: 20     # guarantees full round-robin initialization
+spatial_warmup_rounds: 100    # 100 updates (5 rounds across 20 clients) for clean initialization
 norm_anomaly_threshold: 1.35  # blocks S2 +123% norm-inflated updates (threshold 1.35x median)
 # Pairwise Residual Coherence (PRC) & Temporal Residual Autocorrelation (TRA)
 theta_prc: 0.20              # minimum PRC for full P2 acceptance (S2 has PRC ≈ 0-0.12, honest > 0.60)
@@ -78,7 +78,7 @@ borderline_limit: 5
 # Joint Decision Engine & Multi-Action Filtering (Phase 3)
 decision_mode: "joint"            # "joint" | "legacy"
 warm_start_mode: "state_maturity" # "state_maturity" (Adaptive) | "fixed" (Legacy 80)
-temporal_min_samples: 20          # Minimum gap observations for temporal maturity
+temporal_min_samples: 100         # 100 gap observations for mature empirical Tukey fences
 behavioral_min_depth: 3           # Trajectory history depth for behavioral maturity
 warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
 alpha_downweight: 0.35            # Base weight attenuation for non-IID updates

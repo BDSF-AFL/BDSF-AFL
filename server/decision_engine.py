@@ -211,7 +211,9 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
         is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
-        is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
+        # Genesis Anchor protects non-IID minority nodes when sim_g < theta_cos.
+        # When spatial agreement is strong (sim_g >= theta_cos), global fleet consensus is established.
+        is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or is_spatial_valid)
         # Tolerate minor inter-batch GPU/thread timing jitter (g_margin <= 0.20) when spatial & self agreement are strong
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
         # Pairwise Residual Coherence: S2 mimicry has PRC ≈ 0 (random orthogonal noise),
@@ -250,7 +252,7 @@ class JointDecisionEngine:
         # Evaluates honest non-IID clients and moderate timing variations
         c_dw = behavioral_ev.consecutive_dw
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
-        is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
+        is_anchor_valid_p3 = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or (sim_g is not None and sim_g >= self.theta_cos))
         
         # Dynamic minority consistency:
         # Client is proven authentic minority non-IID node when aligned with its Genesis Anchor
@@ -264,7 +266,7 @@ class JointDecisionEngine:
 
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
-            is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
+            is_anchor_valid_p3 and is_drift_bounded and is_temporal_tolerable):
             
             # If persistent multi-round suspicion has accumulated, reject without downweighting
             if S_i >= self.suspicion_reject_thresh:
