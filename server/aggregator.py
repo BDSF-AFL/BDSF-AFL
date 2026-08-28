@@ -104,6 +104,9 @@ class AggregatorServer:
         # Step 15: Round number (incremented on each accepted update)
         self.round_number: int = 0
 
+        # Step 15b: Monotonic server model version counter
+        self.model_version: int = 0
+
         # Step 16: Baseline aggregation configs
         self.aggregation = config.get("aggregation", "bdsf_afl")
         self.sync = config.get("sync", False)
@@ -113,6 +116,10 @@ class AggregatorServer:
         # Step 17: Deadlock-breaking watchdog
         self.consecutive_rejects: int = 0
         self.deadlock_threshold: int = config.get("deadlock_threshold", len(client_ids))
+
+    def get_model_version(self) -> int:
+        """Returns the current monotonic global model version."""
+        return self.model_version
 
     # ------------------------------------------------------------------
     # Main entry point — the 12-step pipeline
@@ -125,6 +132,8 @@ class AggregatorServer:
         t_now = submission.t_submit
         g_i = t_now - reg.last_update_time
         I_i, P_i = self.rep_manager.get(cid)
+        pulled_version = getattr(submission, "model_version_at_pull", 0)
+        version_lag = max(0, self.model_version - pulled_version)
 
         if self.aggregation in ("fedavg", "fedprox"):
             if self.sync:
@@ -343,7 +352,7 @@ class AggregatorServer:
             self.temporal_filter.step_seen()
 
         # --- Evidence Extraction (Observability Layer) ---
-        temporal_evidence = self.temporal_filter.extract_evidence(g_i, cid)
+        temporal_evidence = self.temporal_filter.extract_evidence(g_i, cid, version_lag=version_lag)
         spatial_evidence = self.spatial_validator.extract_evidence(submission.delta_W)
         client_gaps = self.temporal_filter.client_gap_history.get(cid, [])
         behavioral_evidence = self.behavioral_memory.extract_evidence(
@@ -409,6 +418,7 @@ class AggregatorServer:
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
+                            version_lag=version_lag,
                             weight=q_w, action="ACCEPT",
                             quarantine_depth=self.quarantine_manager.depth,
                         )
@@ -416,13 +426,14 @@ class AggregatorServer:
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
+                            version_lag=version_lag,
                             weight=None, action="REJECT",
                             quarantine_depth=self.quarantine_manager.depth,
                         )
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                     status="ACCEPT", reason=outcome.primary_reason,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
@@ -447,6 +458,8 @@ class AggregatorServer:
                     cadence_consistency=behavioral_evidence.cadence_consistency,
                     history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
+                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                    anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
@@ -486,7 +499,7 @@ class AggregatorServer:
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                     status="DOWNWEIGHT", reason=outcome.primary_reason,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
@@ -511,6 +524,8 @@ class AggregatorServer:
                     cadence_consistency=behavioral_evidence.cadence_consistency,
                     history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
+                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                    anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
@@ -541,7 +556,7 @@ class AggregatorServer:
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                     status="QUARANTINE", reason=outcome.primary_reason,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
@@ -566,6 +581,8 @@ class AggregatorServer:
                     cadence_consistency=behavioral_evidence.cadence_consistency,
                     history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
+                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                    anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
@@ -596,7 +613,7 @@ class AggregatorServer:
                 I_i, P_i = self.rep_manager.get(cid)
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, I_i=I_i, P_i=P_i,
+                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                     status="REJECT", reason=outcome.primary_reason,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
@@ -621,6 +638,8 @@ class AggregatorServer:
                     cadence_consistency=behavioral_evidence.cadence_consistency,
                     history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
+                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                    anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
@@ -657,7 +676,7 @@ class AggregatorServer:
             # Letting the gap accumulate prevents the client from being trapped in a loop.
             self._log_update(
                 round=self.round_number, client_id=cid,
-                g_i=g_i, I_i=I_i, P_i=P_i,
+                g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="TEMPORAL_HIGH_FREQ",
                 lower_fence=temporal_evidence.lower_fence,
                 upper_fence=temporal_evidence.upper_fence,
@@ -682,6 +701,8 @@ class AggregatorServer:
                 cadence_consistency=behavioral_evidence.cadence_consistency,
                 history_depth=behavioral_evidence.history_depth,
                 sim_anchor=behavioral_evidence.sim_anchor,
+                sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                anchor_drift=behavioral_evidence.anchor_drift,
                 consecutive_dw=behavioral_evidence.consecutive_dw,
                 quarantine_depth=self.quarantine_manager.depth,
             )
@@ -709,7 +730,7 @@ class AggregatorServer:
             reg.last_update_time = fs_payload.timestamp
             self._log_update(
                 round=self.round_number, client_id=cid,
-                g_i=g_i, I_i=I_i, P_i=P_i,
+                g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="TEMPORAL_STRAGGLER",
                 lower_fence=temporal_evidence.lower_fence,
                 upper_fence=temporal_evidence.upper_fence,
@@ -734,6 +755,8 @@ class AggregatorServer:
                 cadence_consistency=behavioral_evidence.cadence_consistency,
                 history_depth=behavioral_evidence.history_depth,
                 sim_anchor=behavioral_evidence.sim_anchor,
+                sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                anchor_drift=behavioral_evidence.anchor_drift,
                 consecutive_dw=behavioral_evidence.consecutive_dw,
                 quarantine_depth=self.quarantine_manager.depth,
             )
@@ -760,7 +783,7 @@ class AggregatorServer:
             reg.last_update_time = t_now
             self._log_update(
                 round=self.round_number, client_id=cid,
-                g_i=g_i, I_i=I_i, P_i=P_i,
+                g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
                 status="REJECT", reason="SPATIAL_COSINE",
                 lower_fence=temporal_evidence.lower_fence,
                 upper_fence=temporal_evidence.upper_fence,
@@ -785,6 +808,8 @@ class AggregatorServer:
                 cadence_consistency=behavioral_evidence.cadence_consistency,
                 history_depth=behavioral_evidence.history_depth,
                 sim_anchor=behavioral_evidence.sim_anchor,
+                sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+                anchor_drift=behavioral_evidence.anchor_drift,
                 consecutive_dw=behavioral_evidence.consecutive_dw,
                 quarantine_depth=self.quarantine_manager.depth,
             )
@@ -831,7 +856,7 @@ class AggregatorServer:
         reg.last_update_time = t_now
         self._log_update(
             round=self.round_number, client_id=cid,
-            g_i=g_i, I_i=I_i, P_i=P_i,
+            g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
             status="ACCEPT", reason="FULL_ACCEPT",
             lower_fence=temporal_evidence.lower_fence,
             upper_fence=temporal_evidence.upper_fence,
@@ -856,6 +881,8 @@ class AggregatorServer:
             cadence_consistency=behavioral_evidence.cadence_consistency,
             history_depth=behavioral_evidence.history_depth,
             sim_anchor=behavioral_evidence.sim_anchor,
+            sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
+            anchor_drift=behavioral_evidence.anchor_drift,
             consecutive_dw=behavioral_evidence.consecutive_dw,
             quarantine_depth=self.quarantine_manager.depth,
         )
@@ -900,7 +927,7 @@ class AggregatorServer:
         return time.time() - self.total_eval_time
 
     def _apply_global_update(self, effective_delta: torch.Tensor) -> None:
-        """Applies momentum-enhanced asynchronous aggregation.
+        """Applies momentum-enhanced asynchronous aggregation and increments model version.
         effective_delta is already scaled by eta and decision weight (1.0 for ACCEPT, 0.5 for DW).
         """
         if self.server_momentum > 0.0:
@@ -908,6 +935,7 @@ class AggregatorServer:
             self.W_global = self.W_global + self.v_momentum
         else:
             self.W_global = self.W_global + effective_delta
+        self.model_version += 1
 
     def get_momentum_norm(self) -> float:
         """Returns the L2 norm of the server momentum velocity vector."""
@@ -927,34 +955,19 @@ class AggregatorServer:
             "v_momentum": self.v_momentum.clone().cpu() if self.v_momentum is not None else None,
             "round_number": self.round_number,
             "update_counter": self.update_counter,
+            "model_version": self.model_version,
             "rep_scores": {cid: {"I": s["I"], "P": s["P"]} for cid, s in self.rep_manager.scores.items()},
             "rep_history": {cid: list(h) for cid, h in self.rep_manager._history.items()},
             "spatial_streaks": dict(self.rep_manager.spatial_reject_streak),
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
-            "spatial_state": {
-                "total_accepted_count": self.spatial_validator._total_accepted_count,
-                "unique_accepted_clients": list(self.spatial_validator._unique_accepted_clients),
-                "buffer": [
-                    {
-                        "client_id": e.client_id,
-                        "delta_W": e.delta_W.clone().cpu(),
-                        "I_score": getattr(e, "I_score", 1.0),
-                        "P_score": getattr(e, "P_score", 1.0),
-                        "is_warmup": getattr(e, "is_warmup", False),
-                    }
-                    for e in self.spatial_validator._buffer
-                ],
-            },
-            "behavioral_profiles": {
-                cid: {
-                    "gradient_memory": [v.clone().cpu() for v in prof.gradient_memory],
-                    "anchor": prof.genesis_anchor.clone().cpu() if prof.genesis_anchor is not None else None,
-                    "consecutive_downweights": prof.consecutive_downweights,
-                    "norm_history": list(prof.norm_history),
-                    "early_vectors": [v.clone().cpu() for v in prof.early_vectors] if prof.genesis_anchor is None else [],
-                    "total_accepted": prof.total_accepted,
-                } for cid, prof in self.behavioral_memory.profiles.items()
-            },
+            "temporal_filter": self.temporal_filter.get_state(),
+            "spatial_validator": self.spatial_validator.get_state(),
+            "behavioral_memory": self.behavioral_memory.get_state(),
+            "quarantine_manager": self.quarantine_manager.get_state(),
+            "temporal_state": self.temporal_filter.get_state(),
+            "spatial_state": self.spatial_validator.get_state(),
+            "behavioral_profiles": self.behavioral_memory.get_state(),
+            "quarantine_state": self.quarantine_manager.get_state(),
         }
 
     def load_state(self, state: dict) -> None:
@@ -965,6 +978,7 @@ class AggregatorServer:
             self.v_momentum.copy_(state["v_momentum"])
         self.round_number = state.get("round_number", self.round_number)
         self.update_counter = state.get("update_counter", self.update_counter)
+        self.model_version = state.get("model_version", self.model_version)
         if "rep_scores" in state:
             for cid, s in state["rep_scores"].items():
                 if cid in self.rep_manager.scores:
@@ -978,40 +992,22 @@ class AggregatorServer:
             for cid, val in state["borderline_streaks"].items():
                 if cid in self.rep_manager.borderline_streak:
                     self.rep_manager.borderline_streak[cid] = val
-        if "spatial_state" in state:
-            sp_data = state["spatial_state"]
-            self.spatial_validator._total_accepted_count = sp_data.get("total_accepted_count", self.update_counter)
-            self.spatial_validator._unique_accepted_clients = set(sp_data.get("unique_accepted_clients", []))
-            from collections import deque
-            from shared.types import AcceptedEntry
-            self.spatial_validator._buffer = deque(
-                [
-                    AcceptedEntry(
-                        client_id=item.get("client_id"),
-                        delta_W=item["delta_W"],
-                        I_score=item.get("I_score", 1.0),
-                        P_score=item.get("P_score", 1.0),
-                        is_warmup=item.get("is_warmup", False),
-                    )
-                    for item in sp_data.get("buffer", [])
-                ],
-                maxlen=self.spatial_validator.M,
-            )
-        else:
-            self.spatial_validator._total_accepted_count = self.update_counter
-        if "behavioral_profiles" in state:
-            from collections import deque
-            for cid, prof_data in state["behavioral_profiles"].items():
-                prof = self.behavioral_memory.get_or_create_profile(cid)
-                if "gradient_memory" in prof_data:
-                    prof.gradient_memory = deque([v.clone() for v in prof_data["gradient_memory"]], maxlen=self.behavioral_memory.history_size)
-                prof.genesis_anchor = prof_data["anchor"].clone() if prof_data.get("anchor") is not None else None
-                prof.consecutive_downweights = prof_data.get("consecutive_downweights", 0)
-                if "norm_history" in prof_data:
-                    prof.norm_history = deque(list(prof_data["norm_history"]), maxlen=self.behavioral_memory.history_size)
-                if "early_vectors" in prof_data:
-                    prof.early_vectors = [v.clone() for v in prof_data["early_vectors"]]
-                prof.total_accepted = prof_data.get("total_accepted", 0)
+        if "temporal_filter" in state:
+            self.temporal_filter.load_state(state["temporal_filter"])
+        elif "temporal_state" in state:
+            self.temporal_filter.load_state(state["temporal_state"])
+        if "spatial_validator" in state:
+            self.spatial_validator.load_state(state["spatial_validator"])
+        elif "spatial_state" in state:
+            self.spatial_validator.load_state(state["spatial_state"])
+        if "behavioral_memory" in state:
+            self.behavioral_memory.load_state(state["behavioral_memory"])
+        elif "behavioral_profiles" in state:
+            self.behavioral_memory.load_state(state["behavioral_profiles"])
+        if "quarantine_manager" in state:
+            self.quarantine_manager.load_state(state["quarantine_manager"])
+        elif "quarantine_state" in state:
+            self.quarantine_manager.load_state(state["quarantine_state"])
 
     def accumulate_eval_time(self, duration: float) -> None:
         """Accrues CPU execution time spent on blocking evaluations."""

@@ -254,3 +254,39 @@ class SpatialValidator:
         ref, _, _ = self._build_reference_stats()
         return ref
 
+    def get_state(self) -> dict:
+        """Serializes spatial validator state for checkpoint equivalence."""
+        buffer_state = []
+        for e in self._buffer:
+            buffer_state.append({
+                "delta_W": e.delta_W.clone().cpu(),
+                "I_score": e.I_score,
+                "P_score": e.P_score,
+                "client_id": e.client_id,
+                "is_warmup": e.is_warmup,
+            })
+        return {
+            "buffer": buffer_state,
+            "_unique_accepted_clients": list(self._unique_accepted_clients),
+            "_total_accepted_count": self._total_accepted_count,
+            "last_sim": self.last_sim,
+        }
+
+    def load_state(self, state: dict) -> None:
+        """Restores spatial validator state from checkpoint."""
+        self._buffer = deque(maxlen=self.M)
+        buf_list = state.get("buffer", state.get("_buffer", []))
+        for s in buf_list:
+            entry = AcceptedEntry(
+                delta_W=s["delta_W"].clone().cpu(),
+                I_score=float(s.get("I_score", 1.0)),
+                P_score=float(s.get("P_score", 1.0)),
+                client_id=s.get("client_id"),
+                is_warmup=bool(s.get("is_warmup", False)),
+            )
+            self._buffer.append(entry)
+        clients = state.get("_unique_accepted_clients", state.get("unique_accepted_clients", []))
+        self._unique_accepted_clients = set(clients)
+        self._total_accepted_count = int(state.get("_total_accepted_count", state.get("total_accepted_count", 0)))
+        self.last_sim = state.get("last_sim")
+

@@ -200,8 +200,18 @@ def run_benchmarks_from_manifest(
         with open(config_yaml_path, "r", encoding="utf-8") as f:
             base_cfg = yaml.safe_load(f) or {}
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = yaml.safe_load(f)["experiment"]
+    manifest = {}
+    if manifest_path and os.path.exists(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+            manifest = raw.get("experiment", raw)
+    else:
+        # Fallback to standard benchmark_matrix.yaml if available
+        fallback_path = os.path.join(os.path.dirname(__file__), "manifests", "benchmark_matrix.yaml")
+        if os.path.exists(fallback_path):
+            with open(fallback_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+                manifest = raw.get("experiment", raw)
 
     base_cfg.update(copy.deepcopy(manifest))
     if rounds:
@@ -268,7 +278,8 @@ def run_benchmarks_from_manifest(
                         print(f"       --> Acc={res['final_accuracy']*100:.2f}% | FRR={res['FRR']*100:.2f}% | ASR={res['ASR']*100:.2f}% | Time={res['wall_clock_seconds']:.2f}s")
 
     df = pd.DataFrame(records)
-    summary_path = "logs/phase4_results/summaries/benchmark_summary.csv"
+    default_summary = "logs/hardened_matrix/summaries/benchmark_summary.csv" if "hardened" in str(base_cfg.get("log_dir", "")) else "logs/phase4_results/summaries/benchmark_summary.csv"
+    summary_path = base_cfg.get("summary_path", default_summary)
     os.makedirs(os.path.dirname(summary_path), exist_ok=True)
     df.to_csv(summary_path, index=False)
     print(f"\n[SUCCESS] Benchmark runs complete. Saved summary to: {summary_path}\n")

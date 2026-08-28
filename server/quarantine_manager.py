@@ -119,3 +119,33 @@ class QuarantineManager:
     def depth(self) -> int:
         """Current number of quarantined updates in memory."""
         return len(self.buffer)
+
+    def get_state(self) -> dict:
+        """Serializes quarantine manager state for checkpointing."""
+        entries_state = []
+        for e in self.buffer:
+            entries_state.append({
+                "entry_id": e.entry_id,
+                "client_id": e.client_id,
+                "delta_W_clipped": e.delta_W_clipped.clone().cpu(),
+                "entry_round": e.entry_round,
+                "entry_virtual_time": e.entry_virtual_time,
+                "reputation_at_entry": e.reputation_at_entry,
+                "primary_reason": e.primary_reason,
+            })
+        return {"buffer": entries_state}
+
+    def load_state(self, state: dict) -> None:
+        """Restores quarantine manager state from checkpoint."""
+        self.buffer = deque(maxlen=self.capacity)
+        for s in state.get("buffer", []):
+            entry = QuarantinedEntry(
+                entry_id=s["entry_id"],
+                client_id=s["client_id"],
+                delta_W_clipped=s["delta_W_clipped"].clone().cpu(),
+                entry_round=s["entry_round"],
+                entry_virtual_time=s["entry_virtual_time"],
+                reputation_at_entry=s["reputation_at_entry"],
+                primary_reason=s["primary_reason"],
+            )
+            self.buffer.append(entry)

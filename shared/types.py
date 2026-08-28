@@ -4,12 +4,19 @@ import torch
 
 @dataclass
 class UpdateSubmission:
-    """Sent from ClientNode to AggregatorServer on each push."""
-    client_id:  int
-    delta_W:    torch.Tensor   # flattened 1D: W_local - W_global_at_pull
-    t_submit:   float          # time.time() at push moment
-    tau:        float          # time.time() when client pulled W_global
-                               # s_i (staleness) = t_submit - tau  [NOT used by BDSF-AFL directly]
+    """Sent from ClientNode to AggregatorServer on each push.
+
+    Disambiguation of Delay and Version Tracking:
+      - Compute Delay / Staleness (s_i = t_submit - tau): The continuous wall-clock duration
+        spent between pulling W_global and submitting delta_W (reflects local training time + network latency).
+      - Model-Version Lag: Difference in discrete global model versions (server_model_version - model_version_at_pull).
+      - Inter-Arrival Turnaround Gap (g_i): Continuous time since client's last accepted update (cadence).
+    """
+    client_id:              int
+    delta_W:                torch.Tensor   # flattened 1D: W_local - W_global_at_pull
+    t_submit:               float          # time.time() at push moment
+    tau:                    float          # time.time() when client pulled W_global (staleness s_i = t_submit - tau)
+    model_version_at_pull:  int = 0        # Server model version when client pulled W_global
 
 @dataclass
 class AcceptedEntry:
@@ -22,14 +29,26 @@ class AcceptedEntry:
 
 @dataclass
 class TemporalEvidence:
-    """Continuous temporal features extracted on update submission."""
-    g_i: float                         # Raw behavioral gap in seconds
+    """Continuous temporal features extracted on update submission.
+
+    Disambiguation of Temporal Concepts:
+      1. Inter-Arrival Cadence / Turnaround Gap (g_i):
+         Continuous time interval between successive accepted/submitted updates from client i
+         (g_i = t_submit - last_update_time). Filtered via Tukey fences [L, U] and client z-scores.
+      2. Model-Version Lag (version_lag):
+         Discrete difference in global model iterations between when W_global was pulled by the client
+         and when the update is processed by the server (version_lag = server_model_version - model_version_at_pull).
+      3. Compute Delay / Execution Latency (s_i):
+         Continuous wall-clock time required for client local execution and transmission (s_i = t_submit - tau).
+    """
+    g_i: float                         # Raw behavioral gap in seconds (turnaround gap since last accept)
     lower_fence: Optional[float]       # Current lower Tukey fence L
     upper_fence: Optional[float]       # Current upper Tukey fence U
     fence_margin: float                # Normalized distance to nearest fence (0.0 if within [L, U])
     client_z_score: float              # Gap normalized against client's local historical mean and std
     is_burn_in: bool                   # Deprecated legacy alias: Whether temporal manifold is in warmup
     temporal_mature: Optional[bool] = None  # True when >= temporal_min_samples & valid statistics exist
+    version_lag: int = 0               # Discrete model-version lag: server_model_version - model_version_at_pull
 
     def __post_init__(self):
         if self.temporal_mature is None:
@@ -54,14 +73,20 @@ class SpatialEvidence:
 
 @dataclass
 class BehavioralEvidence:
-    """Continuous historical behavioral consistency features."""
+    """Continuous historical behavioral consistency features.
+
+    Tracks client-specific behavioral identity over time to prevent slow drift,
+    sybil identity-switching, and sudden adversarial trajectory shifts.
+    """
     sim_self_mean: Optional[float]        # Mean cosine similarity against client's own history (None if depth < min_history)
     sim_self_max: Optional[float]         # Max (nearest-neighbor) cosine similarity (None if depth < min_history)
     sim_self_mad: Optional[float] = None  # MAD dispersion of client's own historical trajectory
     norm_deviation_self: Optional[float] = None  # Robust MAD-based normalized deviation from client's historical norm
-    cadence_consistency: Optional[float] = None  # Robust MAD-based normalized deviation of arrival gap
+    cadence_consistency: Optional[float] = None  # Robust MAD-based normalized deviation of arrival gap g_i
     history_depth: int = 0                # Number of entries in client's memory buffer
-    sim_anchor: Optional[float] = None    # Cosine similarity against Genesis Anchor (active when depth >= 1)
+    sim_anchor: Optional[float] = None    # Cosine similarity against adaptive Genesis Anchor (active when depth >= 1)
+    sim_frozen_anchor: Optional[float] = None  # Cosine similarity against immutable frozen Genesis Anchor
+    anchor_drift: Optional[float] = None  # Angular/cosine divergence between adaptive and frozen anchors
     consecutive_dw: int = 0               # Active consecutive downweight streak
     behavioral_mature: Optional[bool] = None  # True when history_depth >= behavioral_min_depth (depth >= 3)
 

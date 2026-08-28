@@ -35,6 +35,11 @@ class ClientNode:
             W_global = self.server.get_global_weights()
             self.server.update_pull_time(self.client_id, tau)
             self._state["W_local"] = W_global.clone()
+
+        if hasattr(self.server, "get_model_version") and callable(self.server.get_model_version):
+            model_version = self.server.get_model_version()
+        else:
+            model_version = getattr(self.server, "model_version", 0)
  
         # 2. Simulate compute delay
         await self._simulate_delay()
@@ -50,6 +55,7 @@ class ClientNode:
             delta_W=delta_W,
             t_submit=t_submit,
             tau=tau,
+            model_version_at_pull=model_version,
         )
 
         # 5. Push to server

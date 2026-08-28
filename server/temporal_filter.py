@@ -45,10 +45,10 @@ class TemporalFilter:
             return not self.is_temporal_mature()
         return self._total_seen <= self.N_burn
 
-    def extract_evidence(self, g_i: float, client_id: Optional[int] = None) -> TemporalEvidence:
+    def extract_evidence(self, g_i: float, client_id: Optional[int] = None, version_lag: int = 0) -> TemporalEvidence:
         """Extracts continuous temporal features without altering state."""
         temp_mature = self.is_temporal_mature()
-        is_burn = not temp_mature if self.warm_start_mode == "state_maturity" else self._total_seen <= self.N_burn
+        is_burn = self.is_burn_in()
 
         if not temp_mature:
             L, U = None, None
@@ -87,6 +87,7 @@ class TemporalFilter:
             client_z_score=client_z_score,
             is_burn_in=is_burn,
             temporal_mature=temp_mature,
+            version_lag=version_lag,
         )
 
     def step_seen(self) -> None:
@@ -133,10 +134,6 @@ class TemporalFilter:
         self.record_gap(g_i, client_id)
         return "PASS"
 
-    def is_burn_in(self) -> bool:
-        """Returns ``True`` while still in the burn-in phase."""
-        return self._total_seen <= self.N_burn
-
     def get_stats(self) -> dict:
         """Returns a dict with diagnostic information for logging."""
         K_t = self._compute_Kt()
@@ -148,6 +145,20 @@ class TemporalFilter:
             "L": L,
             "U": U,
         }
+
+    def get_state(self) -> dict:
+        """Serializes temporal filter state for exact checkpoint equivalence."""
+        return {
+            "gap_history": list(self.gap_history),
+            "client_gap_history": {k: list(v) for k, v in self.client_gap_history.items()},
+            "_total_seen": self._total_seen,
+        }
+
+    def load_state(self, state: dict) -> None:
+        """Restores temporal filter state from checkpoint."""
+        self.gap_history = list(state.get("gap_history", []))
+        self.client_gap_history = {int(k): list(v) for k, v in state.get("client_gap_history", {}).items()}
+        self._total_seen = state.get("_total_seen", 0)
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                   #

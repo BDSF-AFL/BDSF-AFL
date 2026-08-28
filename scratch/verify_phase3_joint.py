@@ -212,8 +212,9 @@ class TestDualHorizonGenesisAnchor(unittest.TestCase):
         self.assertIsNotNone(profile.genesis_anchor)
 
         # Step 4: Check anchor similarity
-        sim = profile.compute_anchor_similarity(torch.tensor([1.0, 0.0, 0.0]))
-        self.assertGreater(sim, 0.95)
+        sim_adaptive, sim_frozen = profile.compute_anchor_similarity(torch.tensor([1.0, 0.0, 0.0]))
+        self.assertGreater(sim_adaptive, 0.95)
+        self.assertGreater(sim_frozen, 0.95)
 
         # Step 5: Downweight increments counter without updating anchor
         anchor_before = profile.genesis_anchor.clone()

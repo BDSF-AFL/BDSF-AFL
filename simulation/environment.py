@@ -33,12 +33,15 @@ def _run_trainer_in_process(model, dataloader, config, W_global, current_round: 
     return trainer.train(W_global, current_round=current_round)
 
 def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     set_xla_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
 
 import hashlib
 from models.resnet import CIFAR10ResNet18, MNISTMLP, CIFAR10CNN
@@ -74,13 +77,17 @@ class AttackInjectorWrapper:
         if self.client._state.get("force_sync_applied", False):
             W_global = self.client._state["W_local"].clone()
             tau = self.client._state.get("last_reset_time", self.server.get_virtual_time())
+            version_at_pull = self.server.get_model_version()
             self.server.update_pull_time(self.client.client_id, tau)
             self.client._state["force_sync_applied"] = False
+            self.client._state["model_version_at_pull"] = version_at_pull
         else:
             tau = self.server.get_virtual_time()
             W_global = self.server.get_global_weights()
+            version_at_pull = self.server.get_model_version()
             self.server.update_pull_time(self.client.client_id, tau)
             self.client._state["W_local"] = W_global.clone()
+            self.client._state["model_version_at_pull"] = version_at_pull
  
         # 2. Simulate compute delay
         await self.client._simulate_delay()
@@ -124,6 +131,7 @@ class AttackInjectorWrapper:
             delta_W=modified_dW,
             t_submit=t_submit_modified,
             tau=tau,
+            model_version_at_pull=version_at_pull,
         )
 
         # 6. Push to server
@@ -304,6 +312,12 @@ class SimulationEnvironment:
                     "model_arch": self.config.get("model_architecture", "resnet18"),
                     "round": server.round_number,
                     "update_counter": server.update_counter,
+                    "model_version": server.model_version,
+                    "seed_manifest": {
+                        "seed": self.seed,
+                        "attack_type": self.attack_type,
+                        "decision_mode": self.config.get("decision_mode", "joint"),
+                    },
                     "best_accuracy": best_acc,
                     "best_score": best_score,
                     "best_round": best_round,

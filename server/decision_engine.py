@@ -64,6 +64,7 @@ class JointDecisionEngine:
         I_i: float,
         P_i: float,
         current_round: int = 0,
+        version_lag: int = 0,
     ) -> JointDecisionOutcome:
         """Deterministically evaluates candidate update evidence against Priority 0-5 hierarchy."""
         
@@ -74,6 +75,10 @@ class JointDecisionEngine:
         g_margin = temporal_ev.fence_margin
         depth = behavioral_ev.history_depth
 
+        v_lag = version_lag if version_lag != 0 else getattr(temporal_ev, "version_lag", 0)
+        sim_frozen = getattr(behavioral_ev, "sim_frozen_anchor", None)
+        drift_a = getattr(behavioral_ev, "anchor_drift", None)
+
         # ---------------------------------------------------------------------
         # PRIORITY 0a: Universal Safety Pre-Check (Active ALWAYS, even during warmup)
         # ---------------------------------------------------------------------
@@ -83,7 +88,14 @@ class JointDecisionEngine:
                 primary_reason="HARD_GUARD_ZERO_GRADIENT",
                 aggregation_weight=0.0,
                 force_sync_required=True,
-                diagnostic_features={"priority": 0, "violation": "norm_raw == 0", "norm_r": norm_r}
+                diagnostic_features={
+                    "priority": 0,
+                    "violation": "norm_raw == 0",
+                    "norm_r": norm_r,
+                    "version_lag": v_lag,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
+                }
             )
 
         if C_t is not None and np.isfinite(C_t) and C_t > 1e-9 and norm_r > 3.0 * C_t:
@@ -92,7 +104,15 @@ class JointDecisionEngine:
                 primary_reason="HARD_GUARD_NORM_EXPLOSION",
                 aggregation_weight=0.0,
                 force_sync_required=False,
-                diagnostic_features={"priority": 0, "violation": "norm_raw > 3.0*C_t", "norm_r": norm_r, "C_t": C_t}
+                diagnostic_features={
+                    "priority": 0,
+                    "violation": "norm_raw > 3.0*C_t",
+                    "norm_r": norm_r,
+                    "C_t": C_t,
+                    "version_lag": v_lag,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
+                }
             )
 
         # ---------------------------------------------------------------------
@@ -110,6 +130,9 @@ class JointDecisionEngine:
                     "spatial_mature": False,
                     "ref_count": spatial_ev.spatial_reference_count,
                     "coherence": spatial_ev.spatial_coherence,
+                    "version_lag": v_lag,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
                 }
             )
 
@@ -134,6 +157,9 @@ class JointDecisionEngine:
                         "priority": 1,
                         "violation": "sim_global < -theta_floor",
                         "sim_g": sim_g,
+                        "version_lag": v_lag,
+                        "sim_frozen_anchor": sim_frozen,
+                        "anchor_drift": drift_a,
                     }
                 )
 
@@ -145,7 +171,14 @@ class JointDecisionEngine:
                     primary_reason="HARD_GUARD_TEMPORAL_SPAM",
                     aggregation_weight=0.0,
                     force_sync_required=False,
-                    diagnostic_features={"priority": 1, "violation": "extreme_high_freq", "margin": g_margin}
+                    diagnostic_features={
+                        "priority": 1,
+                        "violation": "extreme_high_freq",
+                        "margin": g_margin,
+                        "version_lag": v_lag,
+                        "sim_frozen_anchor": sim_frozen,
+                        "anchor_drift": drift_a,
+                    }
                 )
             else:
                 return JointDecisionOutcome(
@@ -153,7 +186,14 @@ class JointDecisionEngine:
                     primary_reason="HARD_GUARD_TEMPORAL_STRAGGLER",
                     aggregation_weight=0.0,
                     force_sync_required=True,  # Dispatches HMAC Hard-Reset Payload
-                    diagnostic_features={"priority": 1, "violation": "extreme_straggler", "margin": g_margin}
+                    diagnostic_features={
+                        "priority": 1,
+                        "violation": "extreme_straggler",
+                        "margin": g_margin,
+                        "version_lag": v_lag,
+                        "sim_frozen_anchor": sim_frozen,
+                        "anchor_drift": drift_a,
+                    }
                 )
 
         # ---------------------------------------------------------------------
@@ -181,7 +221,10 @@ class JointDecisionEngine:
                     "priority": 2,
                     "sim_g": sim_g,
                     "sim_s": sim_s,
-                    "sim_anchor": behavioral_ev.sim_anchor
+                    "sim_anchor": behavioral_ev.sim_anchor,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
+                    "version_lag": v_lag,
                 }
             )
 
@@ -221,9 +264,48 @@ class JointDecisionEngine:
                     "theta_self_eff": theta_self_eff,
                     "alpha_eff": alpha_eff,
                     "sim_anchor": behavioral_ev.sim_anchor,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
+                    "version_lag": v_lag,
                     "is_minority_consistent": is_minority_consistent
                 }
             )
+
+        # ---------------------------------------------------------------------
+        # PRIORITY 4: Ambiguous / Borderline Evidence (QUARANTINE)
+        # ---------------------------------------------------------------------
+        # Checked before Priority 3b so borderline ambiguous updates from immature profiles
+        # (|sim_g - theta_cos| <= delta_borderline under mature spatial reference) are quarantined
+        # to await reference centroid stabilization rather than unconditionally downweighted under Priority 3b.
+        if self.enable_quarantine:
+            is_borderline_spatial = (
+                sim_g is not None
+                and abs(sim_g - self.theta_cos) <= self.delta_borderline
+                and not behavioral_ev.behavioral_mature
+                and spatial_ev.spatial_mature
+            )
+            is_moderate_temporal_trusted = (
+                temporal_ev.temporal_mature
+                and 0.0 < g_margin <= self.delta_temp_mod
+                and I_i >= self.trusted_integrity_min
+                and (sim_g is None or sim_g >= 0.0)
+            )
+
+            if is_borderline_spatial or is_moderate_temporal_trusted:
+                return JointDecisionOutcome(
+                    action="QUARANTINE",
+                    primary_reason="AMBIGUOUS_EVIDENCE_QUARANTINE",
+                    aggregation_weight=0.0,
+                    force_sync_required=False,
+                    diagnostic_features={
+                        "priority": 4,
+                        "is_borderline_spatial": is_borderline_spatial,
+                        "is_mod_temp": is_moderate_temporal_trusted,
+                        "sim_frozen_anchor": sim_frozen,
+                        "anchor_drift": drift_a,
+                        "version_lag": v_lag,
+                    }
+                )
 
         # 3b. Early Transition Non-IID Downweight (depth < 3, legitimate spatial range before full profile depth)
         is_early_self_valid = (sim_s is None or sim_s >= self.theta_self)
@@ -241,25 +323,12 @@ class JointDecisionEngine:
                     "c_dw": c_dw,
                     "alpha_eff": alpha_eff,
                     "sim_anchor": behavioral_ev.sim_anchor,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
+                    "version_lag": v_lag,
                     "is_minority_consistent": is_minority_consistent
                 }
             )
-
-        # ---------------------------------------------------------------------
-        # PRIORITY 4: Ambiguous / Borderline Evidence (QUARANTINE)
-        # ---------------------------------------------------------------------
-        if self.enable_quarantine:
-            is_borderline_spatial = (sim_g is not None and abs(sim_g - self.theta_cos) <= self.delta_borderline and not behavioral_ev.behavioral_mature)
-            is_moderate_temporal_trusted = (temporal_ev.temporal_mature and 0.0 < g_margin <= self.delta_temp_mod and I_i >= self.trusted_integrity_min and (sim_g is None or sim_g >= 0.0))
-
-            if is_borderline_spatial or is_moderate_temporal_trusted:
-                return JointDecisionOutcome(
-                    action="QUARANTINE",
-                    primary_reason="AMBIGUOUS_EVIDENCE_QUARANTINE",
-                    aggregation_weight=0.0,
-                    force_sync_required=False,
-                    diagnostic_features={"priority": 4, "is_borderline_spatial": is_borderline_spatial, "is_mod_temp": is_moderate_temporal_trusted}
-                )
 
         # ---------------------------------------------------------------------
         # PRIORITY 5: Adversarial / Inconsistent Fallthrough (REJECT)
@@ -269,5 +338,13 @@ class JointDecisionEngine:
             primary_reason="UNCOORDINATED_OR_ADVERSARIAL_REJECT",
             aggregation_weight=0.0,
             force_sync_required=False,
-            diagnostic_features={"priority": 5, "sim_g": sim_g, "sim_s": sim_s, "c_dw": c_dw}
+            diagnostic_features={
+                "priority": 5,
+                "sim_g": sim_g,
+                "sim_s": sim_s,
+                "c_dw": c_dw,
+                "sim_frozen_anchor": sim_frozen,
+                "anchor_drift": drift_a,
+                "version_lag": v_lag,
+            }
         )

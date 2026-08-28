@@ -1,0 +1,56 @@
+# BDSF-AFL Hardened Matrix: Baseline Benchmark Experiment Manifest
+experiment:
+  name: "hardened_baseline_benchmarks"
+  dataset: "CIFAR10"
+  model_architecture: "resnet18"
+  rounds: 200
+  batch_size: 64
+  local_epochs: 1
+  lr: 0.01
+  local_lr: 0.01
+  lr_schedule: "cosine"
+  lr_min: 0.001
+  fedprox_mu: 0.01
+  N_clients: 20
+  M: 60
+  K_base: 50
+  K_ref: 12
+  eta: 0.10
+  server_momentum: 0.50
+  theta_self: 0.00
+  theta_self_mature: 0.35
+  theta_floor: 0.40
+  theta_anchor_min: -0.20
+  theta_anchor_mature: 0.40
+  adaptive_clip_enabled: false
+  static_clip_C: 10.0
+  spatial_warmup_rounds: 20
+  norm_anomaly_threshold: 2.5
+  enable_quarantine: true
+  quarantine_horizon: 5
+  quarantine_capacity: 20
+  delta_borderline: 0.05
+
+  algorithms:
+    - "Proposed_BDSF_AFL"
+
+  heterogeneity:
+    - alpha: 0.5
+      label: "Moderate_NonIID"
+
+  attacks:
+    - "S2_MIMICRY"
+
+  byzantine_fractions:
+    - 0.2
+
+  seeds:
+    - 42
+
+  target_accuracy: 0.75
+  early_stopping: true
+  min_early_stop_round: 100
+  early_stopping_patience: 5
+  log_dir: "logs/hardened_matrix/benchmarks/"
+  checkpoint_dir: "logs/hardened_matrix/checkpoints/"
+  summary_path: "logs/hardened_matrix/summaries/benchmark_summary.csv"

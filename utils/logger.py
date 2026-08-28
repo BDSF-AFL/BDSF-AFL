@@ -17,13 +17,13 @@ class BDSFLogger:
         self.csv_path = os.path.join(self.log_dir, f"{run_id}_updates.csv")
         headers = [
             "round", "client_id", "status", "reason",
-            "g_i", "I_i", "P_i",
+            "g_i", "version_lag", "I_i", "P_i",
             "lower_fence", "upper_fence", "fence_margin", "client_z_score", "is_burn_in",
             "spatial_mature", "temporal_mature", "behavioral_mature", "spatial_ref_count", "spatial_coherence",
             "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
             "weight", "action",
             "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
-            "sim_anchor", "consecutive_dw", "quarantine_depth",
+            "sim_anchor", "sim_frozen_anchor", "anchor_drift", "consecutive_dw", "quarantine_depth",
             "v_momentum_norm"
         ]
         
@@ -63,7 +63,8 @@ class BDSFLogger:
                 f.flush()
 
     def log_update(self, *, round: int, client_id: int, status: str, reason: str, 
-                   g_i: Optional[float] = None, I_i: Optional[float] = None, P_i: Optional[float] = None,
+                   g_i: Optional[float] = None, version_lag: Optional[int] = None,
+                   I_i: Optional[float] = None, P_i: Optional[float] = None,
                    lower_fence: Optional[float] = None, upper_fence: Optional[float] = None,
                    fence_margin: Optional[float] = None, client_z_score: Optional[float] = None,
                    is_burn_in: Optional[bool] = None,
@@ -78,7 +79,10 @@ class BDSFLogger:
                    sim_self_mean: Optional[float] = None, sim_self_max: Optional[float] = None,
                    norm_deviation_self: Optional[float] = None, cadence_consistency: Optional[float] = None,
                    history_depth: Optional[int] = None,
-                   sim_anchor: Optional[float] = None, consecutive_dw: Optional[int] = None,
+                   sim_anchor: Optional[float] = None,
+                   sim_frozen_anchor: Optional[float] = None,
+                   anchor_drift: Optional[float] = None,
+                   consecutive_dw: Optional[int] = None,
                    quarantine_depth: Optional[int] = None,
                    v_momentum_norm: Optional[float] = None) -> None:
         """Log update status and metadata. Appends to list and CSV."""
@@ -89,6 +93,7 @@ class BDSFLogger:
             "status": status,
             "reason": reason,
             "g_i": g_i,
+            "version_lag": version_lag,
             "I_i": I_i,
             "P_i": P_i,
             "lower_fence": lower_fence,
@@ -115,6 +120,8 @@ class BDSFLogger:
             "cadence_consistency": cadence_consistency,
             "history_depth": history_depth,
             "sim_anchor": sim_anchor,
+            "sim_frozen_anchor": sim_frozen_anchor,
+            "anchor_drift": anchor_drift,
             "consecutive_dw": consecutive_dw,
             "quarantine_depth": quarantine_depth,
             "v_momentum_norm": v_momentum_norm,
@@ -123,6 +130,7 @@ class BDSFLogger:
         
         # Format values for CSV
         g_val = f"{g_i:.6f}" if g_i is not None else ""
+        vlag_val = str(version_lag) if version_lag is not None else ""
         I_val = f"{I_i:.6f}" if I_i is not None else ""
         P_val = f"{P_i:.6f}" if P_i is not None else ""
         lf_val = f"{lower_fence:.6f}" if lower_fence is not None else ""
@@ -148,6 +156,8 @@ class BDSFLogger:
         cc_val = f"{cadence_consistency:.6f}" if cadence_consistency is not None else ""
         hd_val = str(history_depth) if history_depth is not None else ""
         sa_val = f"{sim_anchor:.6f}" if sim_anchor is not None else ""
+        sfa_val = f"{sim_frozen_anchor:.6f}" if sim_frozen_anchor is not None else ""
+        adr_val = f"{anchor_drift:.6f}" if anchor_drift is not None else ""
         cdw_val = str(consecutive_dw) if consecutive_dw is not None else ""
         qd_val = str(quarantine_depth) if quarantine_depth is not None else ""
         vm_val = f"{v_momentum_norm:.6f}" if v_momentum_norm is not None else ""
@@ -156,13 +166,13 @@ class BDSFLogger:
             writer = csv.writer(f)
             writer.writerow([
                 round, client_id, status, reason,
-                g_val, I_val, P_val,
+                g_val, vlag_val, I_val, P_val,
                 lf_val, uf_val, fm_val, cz_val, bi_val,
                 sp_m_val, tm_m_val, bm_m_val, src_val, sc_val,
                 sim_g_val, nr_val, nc_val, nrm_val, dbc_val, ra_val,
                 w_val, act_val,
                 ss_mean_val, ss_max_val, nd_self_val, cc_val, hd_val,
-                sa_val, cdw_val, qd_val,
+                sa_val, sfa_val, adr_val, cdw_val, qd_val,
                 vm_val
             ])
             f.flush()
@@ -200,13 +210,13 @@ class BDSFLogger:
             return
         headers = [
             "round", "client_id", "status", "reason",
-            "g_i", "I_i", "P_i",
+            "g_i", "version_lag", "I_i", "P_i",
             "lower_fence", "upper_fence", "fence_margin", "client_z_score", "is_burn_in",
             "spatial_mature", "temporal_mature", "behavioral_mature", "spatial_ref_count", "spatial_coherence",
             "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
             "weight", "action",
             "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
-            "sim_anchor", "consecutive_dw", "quarantine_depth",
+            "sim_anchor", "sim_frozen_anchor", "anchor_drift", "consecutive_dw", "quarantine_depth",
             "v_momentum_norm"
         ]
         clean_rows = []
