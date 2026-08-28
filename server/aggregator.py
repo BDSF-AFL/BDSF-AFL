@@ -960,10 +960,6 @@ class AggregatorServer:
             "rep_history": {cid: list(h) for cid, h in self.rep_manager._history.items()},
             "spatial_streaks": dict(self.rep_manager.spatial_reject_streak),
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
-            "temporal_filter": self.temporal_filter.get_state(),
-            "spatial_validator": self.spatial_validator.get_state(),
-            "behavioral_memory": self.behavioral_memory.get_state(),
-            "quarantine_manager": self.quarantine_manager.get_state(),
             "temporal_state": self.temporal_filter.get_state(),
             "spatial_state": self.spatial_validator.get_state(),
             "behavioral_profiles": self.behavioral_memory.get_state(),
@@ -992,22 +988,18 @@ class AggregatorServer:
             for cid, val in state["borderline_streaks"].items():
                 if cid in self.rep_manager.borderline_streak:
                     self.rep_manager.borderline_streak[cid] = val
-        if "temporal_filter" in state:
-            self.temporal_filter.load_state(state["temporal_filter"])
-        elif "temporal_state" in state:
-            self.temporal_filter.load_state(state["temporal_state"])
-        if "spatial_validator" in state:
-            self.spatial_validator.load_state(state["spatial_validator"])
-        elif "spatial_state" in state:
-            self.spatial_validator.load_state(state["spatial_state"])
-        if "behavioral_memory" in state:
-            self.behavioral_memory.load_state(state["behavioral_memory"])
-        elif "behavioral_profiles" in state:
-            self.behavioral_memory.load_state(state["behavioral_profiles"])
-        if "quarantine_manager" in state:
-            self.quarantine_manager.load_state(state["quarantine_manager"])
-        elif "quarantine_state" in state:
-            self.quarantine_manager.load_state(state["quarantine_state"])
+        temp_state = state.get("temporal_state") or state.get("temporal_filter")
+        if temp_state:
+            self.temporal_filter.load_state(temp_state)
+        spat_state = state.get("spatial_state") or state.get("spatial_validator")
+        if spat_state:
+            self.spatial_validator.load_state(spat_state)
+        behav_state = state.get("behavioral_profiles") or state.get("behavioral_memory")
+        if behav_state:
+            self.behavioral_memory.load_state(behav_state)
+        quar_state = state.get("quarantine_state") or state.get("quarantine_manager")
+        if quar_state:
+            self.quarantine_manager.load_state(quar_state)
 
     def accumulate_eval_time(self, duration: float) -> None:
         """Accrues CPU execution time spent on blocking evaluations."""

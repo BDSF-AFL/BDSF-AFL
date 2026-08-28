@@ -90,12 +90,12 @@ class AttackInjectorWrapper:
             self.client._state["model_version_at_pull"] = version_at_pull
  
         # 2. Simulate compute delay
-        await self.client._simulate_delay()
+        delay = await self.client._simulate_delay()
  
         # 3. Train locally to get honest gradient
         current_round = getattr(self.server, "round_number", 0)
         honest_delta_W = self.client.trainer.train(W_global, current_round=current_round)
-        t_submit_honest = self.server.get_virtual_time()
+        t_submit_honest = tau + delay
         
         # Calculate honest gap g_i
         honest_g_i = t_submit_honest - self.last_update_time
@@ -154,49 +154,58 @@ class SimulationEnvironment:
         self.config = config
         self.attack_type = attack_type
         self.seed = seed
+        self.dataset_name = config.get("dataset", "CIFAR10")
+        self.N = config.get("N_clients", 20)
+        self.alpha = config.get("dirichlet_alpha", 0.1)
+        self.batch_size = config.get("batch_size", 64)
 
     def run(self) -> dict:
         """Runs the complete async federated learning simulation loop."""
+        # 1. Multi-level deterministic seeding
         set_seed(self.seed)
         
-        # 1. Initialize model
-        model, W_init = _build_model(self.config)
+        # 2. Build dataset partitions
+        partitioner = DataPartitioner(
+            dataset_name=self.dataset_name,
+            N_clients=self.N,
+            alpha=self.alpha,
+            batch_size=self.batch_size,
+            seed=self.seed,
+        )
+        dataloaders, test_loader = partitioner.get_dataloaders()
         
-        # 2. Partition dataset
-        partitioner = DataPartitioner(self.config)
-        dataloaders = partitioner.partition()
-        test_loader = partitioner.get_test_loader()
+        # 3. Byzantine identification
+        byz_fraction = self.config.get("byzantine_fraction", 0.0)
+        num_byz = int(self.N * byz_fraction)
+        byz_ids = set(range(num_byz))
+        honest_ids = set(range(num_byz, self.N))
         
-        # 3. Create Logger
-        mode = self.config.get("decision_mode", "joint")
-        run_id = self.config.get("run_id", f"{mode}_{self.attack_type}_{self.seed}")
+        # 4. Logger setup
+        run_id = self.config.get("run_id", f"{self.config.get('algorithm_name', 'BDSF_AFL')}_{self.attack_type}_{self.seed}")
         logger = BDSFLogger(run_id=run_id, config=self.config)
         
-        # 4. Construct AggregatorServer
-        N = self.config.get("N_clients", 20)
-        server = AggregatorServer(self.config, W_init, list(range(N)), logger)
+        # 5. Build Model Architecture & Init Weights
+        model, W_init = _build_model(self.config)
         
-        # 5. Designate Byzantine clients
-        byz_fraction = self.config.get("byz_fraction", 0.2)
-        if self.attack_type == "NONE":
-            byz_fraction = 0.0
-        byz_count = int(N * byz_fraction)
-        byz_ids = set(range(byz_count))
-        honest_ids = set(range(byz_count, N))
-        
-        # 6. Register ground truth labels
-        for cid in byz_ids:
-            server.register_client_ground_truth(cid, is_byzantine=True)
+        # 6. Aggregator Server Setup
+        server = AggregatorServer(
+            config=self.config,
+            W_init=W_init,
+            client_ids=list(range(self.N)),
+            logger=logger,
+        )
             
-        # 7. Create ClientNode and ForceSyncHandler instances
-        #    Distribute clients round-robin across all available GPUs so that
-        #    on a dual-T4 Kaggle instance 10 clients train on cuda:0 and 10 on cuda:1.
-        all_devices = resolve_all_devices()
+        # 7. Worker Node & Trainer Initialization
+        clients = []
+        N = self.N
+        all_devices = resolve_all_devices(self.config)
         n_gpus = len(all_devices)
         print(f"  >> Distributing {N} clients across {n_gpus} device(s): "
               f"{[str(d) for d in all_devices]}")
 
-        clients = []
+        use_multiprocess = False
+        pool = None
+        
         for i in range(N):
             # Round-robin device assignment
             client_device = all_devices[i % n_gpus]
@@ -210,6 +219,7 @@ class SimulationEnvironment:
             client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger, local_model=local_model, dataloader=dataloaders[i], pool=None)
             
             if i in byz_ids:
+                server.register_client_ground_truth(i, is_byzantine=True)
                 injector = AttackInjector(self.attack_type, i, self.config)
                 wrapper = AttackInjectorWrapper(client_node, injector, server)
                 clients.append(wrapper)
@@ -217,32 +227,12 @@ class SimulationEnvironment:
                 clients.append(client_node)
                 
         # 8. True async training loop
-        #
-        # Fix (Critical — Audit Bug 1): The old implementation used
-        #   for r in range(total_rounds): await asyncio.gather(...)
-        # which is a hard synchronisation barrier — every client had to finish
-        # its round before the next could begin.  That is Synchronous FL, not AFL.
-        #
-        # Real AFL: each client runs as an independent continuous coroutine.
-        # The server processes updates as they arrive; fast clients are never
-        # blocked waiting for slow stragglers.
-        #
-        # Termination: total_updates = total_rounds * N accepted updates.
-        # This preserves the interface: total_rounds=5, N=10 → 50 accepted updates,
-        # identical to the old synchronous behaviour in terms of total work done.
-        #
-        # Evaluation (Fix — Audit Bug 3): rep_manager.log_round() is called here,
-        # once per eval cycle, NOT inside AggregatorServer.handle_update().
-        # That removes the O(N²) reputation history growth.
         accuracy_log = []
         total_rounds = self.config.get("total_rounds", 500)
         eval_every   = self.config.get("eval_every", 10)
-        # Primary device for server-side ops (eval, aggregation weight vectors)
-        device       = resolve_device(self.config)  # resolves and stores primary device in config
+        device       = resolve_device(self.config)
 
-        # Total accepted updates to process (re-interprets total_rounds as per-client rounds)
         total_updates      = total_rounds * N
-        # Evaluate accuracy every eval_every "effective global rounds" worth of updates
         eval_every_updates = eval_every * N
         
         # Checkpointing & Convergence Configuration
@@ -274,7 +264,6 @@ class SimulationEnvironment:
                 os.path.join("logs/checkpoints", f"{run_id}_best.pt"),
             ]
             import glob
-            # Match any latest.pt files first
             candidate_paths.extend(glob.glob(f"**/{run_id}*latest*.pt", recursive=True))
             candidate_paths.extend(glob.glob(f"**/{run_id}*.pt", recursive=True))
             
@@ -302,30 +291,34 @@ class SimulationEnvironment:
             else:
                 print(f"[CHECKPOINT] Resume requested, but no checkpoint found for {run_id} (searched in {ckpt_dir} and logs/checkpoints/) - starting from Round 0.")
 
-        def save_checkpoint(path: str, is_best: bool = False):
+        def save_checkpoint(path: str):
             if not self.config.get("save_checkpoints", True):
                 return
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                state = {
-                    "config_hash": config_hash,
-                    "model_arch": self.config.get("model_architecture", "resnet18"),
-                    "round": server.round_number,
-                    "update_counter": server.update_counter,
-                    "model_version": server.model_version,
-                    "seed_manifest": {
-                        "seed": self.seed,
-                        "attack_type": self.attack_type,
-                        "decision_mode": self.config.get("decision_mode", "joint"),
-                    },
-                    "best_accuracy": best_acc,
-                    "best_score": best_score,
-                    "best_round": best_round,
-                    "accuracy_log": list(accuracy_log),
-                    "server_state": server.get_state(),
-                    "rng_state": torch.get_rng_state(),
-                }
-                torch.save(state, path)
+                with torch.no_grad():
+                    state = {
+                        "config_hash": config_hash,
+                        "model_arch": self.config.get("model_architecture", "resnet18"),
+                        "round": server.round_number,
+                        "update_counter": server.update_counter,
+                        "model_version": server.model_version,
+                        "seed_manifest": {
+                            "seed": self.seed,
+                            "attack_type": self.attack_type,
+                            "decision_mode": self.config.get("decision_mode", "joint"),
+                        },
+                        "best_accuracy": best_acc,
+                        "best_score": best_score,
+                        "best_round": best_round,
+                        "accuracy_log": list(accuracy_log),
+                        "server_state": server.get_state(),
+                        "rng_state": torch.get_rng_state(),
+                    }
+                    torch.save(state, path)
+                    del state
+                    import gc
+                    gc.collect()
             except Exception as e:
                 print(f"[WARNING] Checkpoint save to {path} failed: {e}")
 
@@ -345,10 +338,10 @@ class SimulationEnvironment:
             async def client_task(client):
                 """Independent per-client coroutine — runs until stop_event fires."""
                 # Startup jitter to scramble arrival order at the server
-                await asyncio.sleep(random.uniform(0.0, 0.1))
+                await asyncio.sleep(random.uniform(0.0, 0.05))
                 while not stop_event.is_set():
                     await client.run_one_round()
-                    await asyncio.sleep(0.01)  # Yield thread to allow other tasks' timers to resolve
+                    await asyncio.sleep(0.0001)
 
             # Launch every client as an independent background task in random order
             shuffled_clients = list(clients)
@@ -358,9 +351,9 @@ class SimulationEnvironment:
             # Monitor accepted update count and trigger evaluation.
             nonlocal best_score, best_acc, best_round, evals_without_improvement
             next_eval_at = ((server.update_counter // eval_every_updates) + 1) * eval_every_updates
-            last_progress_at = (server.update_counter // N) - 1  # track last round we printed progress
+            last_progress_at = (server.update_counter // N) - 1
             while server.update_counter < total_updates:
-                u = server.update_counter  # snapshot
+                u = server.update_counter
                 eff_round = u // N
 
                 # --- Lightweight per-round progress (every effective round) ---
@@ -378,7 +371,7 @@ class SimulationEnvironment:
                     )
 
                 if u >= next_eval_at:
-                    u = server.update_counter   # snapshot for consistent logging
+                    u = server.update_counter
                     t_start = time.time()
                     acc, val_loss = metrics.compute_evaluation_metrics(
                         model, test_loader, server.get_global_weights(), device=device
@@ -395,17 +388,25 @@ class SimulationEnvironment:
                     gen_gap = max(0.0, val_loss - 0.5)
                     score = acc - 0.05 * gen_gap
 
+                    is_new_best = False
                     if score > best_score:
                         best_score = score
                         best_acc = acc
                         best_round = u // N
                         evals_without_improvement = 0
-                        save_checkpoint(os.path.join(ckpt_dir, f"{run_id}_best.pt"), is_best=True)
+                        is_new_best = True
                     else:
                         evals_without_improvement += 1
 
-                    # Save latest checkpoint
-                    save_checkpoint(os.path.join(ckpt_dir, f"{run_id}_latest.pt"), is_best=False)
+                    # Save latest checkpoint once and copy to best if new best
+                    latest_ckpt_path = os.path.join(ckpt_dir, f"{run_id}_latest.pt")
+                    save_checkpoint(latest_ckpt_path)
+                    if is_new_best:
+                        best_ckpt_path = os.path.join(ckpt_dir, f"{run_id}_best.pt")
+                        try:
+                            shutil.copyfile(latest_ckpt_path, best_ckpt_path)
+                        except Exception:
+                            pass
 
                     elapsed = time.time() - loop_start
                     print(

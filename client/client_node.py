@@ -42,14 +42,14 @@ class ClientNode:
             model_version = getattr(self.server, "model_version", 0)
  
         # 2. Simulate compute delay
-        await self._simulate_delay()
+        delay = await self._simulate_delay()
  
         # 3. Train locally
         current_round = getattr(self.server, "round_number", 0)
         delta_W = self.trainer.train(W_global, current_round=current_round)
  
         # 4. Build submission
-        t_submit = self.server.get_virtual_time()
+        t_submit = tau + delay
         submission = UpdateSubmission(
             client_id=self.client_id,
             delta_W=delta_W,
@@ -67,7 +67,8 @@ class ClientNode:
 
         return response
 
-    async def _simulate_delay(self) -> None:
+    async def _simulate_delay(self) -> float:
         X = float(np.random.lognormal(mean=self._mu_delay, sigma=self._sigma_delay))
         delay = self._T_base * (1.0 + X)
-        await asyncio.sleep(delay)
+        await asyncio.sleep(0.0001)
+        return delay
