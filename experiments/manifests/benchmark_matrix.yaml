@@ -21,8 +21,9 @@ experiment:
   theta_floor: 0.40
   theta_anchor_min: 0.25
   theta_anchor_mature: 0.25
+  theta_cos: 0.25
   adaptive_clip_enabled: true
-  gamma_clip: 1.2
+  gamma_clip: 1.10
   theta_prc: 0.20
   theta_prc_hard: -0.10
   prc_buffer_k: 10
@@ -33,7 +34,7 @@ experiment:
   static_clip_C: 10.0
   spatial_warmup_rounds: 100
   temporal_min_samples: 100
-  norm_anomaly_threshold: 1.35
+  norm_anomaly_threshold: 1.18
   min_integrity_floor: 0.10
 
   algorithms:
