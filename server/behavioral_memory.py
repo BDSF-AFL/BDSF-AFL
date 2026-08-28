@@ -70,6 +70,7 @@ class ClientBehavioralProfile:
                     self.genesis_anchor = unit_vec.clone().half()
                 # Initialize immutable frozen ground-truth anchor
                 self.frozen_genesis_anchor = self.genesis_anchor.clone()
+                self.early_vectors.clear()
         else:
             if self.frozen_genesis_anchor is None:
                 self.frozen_genesis_anchor = self.genesis_anchor.clone()

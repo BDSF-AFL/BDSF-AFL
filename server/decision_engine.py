@@ -24,11 +24,9 @@ class JointDecisionEngine:
     def __init__(self, config: dict):
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
-        self.theta_self: float = config.get("theta_self", 0.00)
-        self.theta_self_mature: float = config.get("theta_self_mature", 0.35)
-        self.theta_floor: float = config.get("theta_floor", 0.40)
-        self.theta_anchor_min: float = config.get("theta_anchor_min", -0.20)
-        self.theta_anchor_mature: float = config.get("theta_anchor_mature", 0.40)
+        self.theta_self: float = config.get("theta_self", 0.60)
+        self.theta_floor: float = config.get("theta_floor", 0.15)
+        self.theta_anchor_min: float = config.get("theta_anchor_min", 0.50)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 5)
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
@@ -40,20 +38,6 @@ class JointDecisionEngine:
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
         self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 2.5))
-        self.spatial_warmup_rounds: int = int(config.get("spatial_warmup_rounds", 20))
-
-    def _get_curriculum_anchor_threshold(self, current_round: int) -> float:
-        """Adaptive Curriculum Anchor Schedule matching optimization phases:
-           - Exploration / Feature Discovery (Round < 20): theta_anchor = -0.20 (gentle)
-           - Manifold Stabilization (Round 20-49): theta_anchor = 0.20 (intermediate)
-           - Mature Convergence (Round >= 50): theta_anchor = 0.40 (full strength)
-        """
-        if current_round < self.spatial_warmup_rounds:
-            return self.theta_anchor_min  # -0.20
-        elif current_round < 50:
-            return 0.20
-        else:
-            return self.theta_anchor_mature  # 0.40
 
     def evaluate(
         self,
@@ -141,12 +125,10 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # 1a. Severe Directional Inversion (Opposes Top-K global consensus beyond floor)
         # Bypass hard drop ONLY if client is proven to be a persistent, anchor-consistent non-IID minority node
-        # Multi-signal check: require BOTH directional inversion AND corroborating norm/behavior anomaly
         if sim_g is not None and sim_g < -self.theta_floor:
             sim_a = behavioral_ev.sim_anchor
-            theta_a_eff = self._get_curriculum_anchor_threshold(current_round)
-            is_anchor_minority = (sim_a is not None and sim_a >= theta_a_eff and 
-                                  (sim_s is None or sim_s >= self.theta_self))
+            is_anchor_minority = (behavioral_ev.behavioral_mature and sim_a is not None and sim_s is not None and 
+                                  sim_a >= self.theta_anchor_min and sim_s >= self.theta_self)
             if not is_anchor_minority:
                 return JointDecisionOutcome(
                     action="REJECT",
@@ -200,14 +182,8 @@ class JointDecisionEngine:
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
-        theta_a_eff = self._get_curriculum_anchor_threshold(current_round)
-        if behavioral_ev.behavioral_mature:
-            is_self_valid = (sim_s is not None and sim_s >= self.theta_self_mature)
-            is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= theta_a_eff)
-        else:
-            is_self_valid = (sim_s is None or sim_s >= self.theta_self)
-            is_anchor_valid = True
-
+        is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
+        is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
         # Tolerate minor inter-batch GPU/thread timing jitter (g_margin <= 0.20) when spatial & self agreement are strong
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
 
@@ -236,16 +212,18 @@ class JointDecisionEngine:
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
         
-        # Dynamic curriculum-calibrated minority consistency:
-        # Client is proven authentic minority non-IID node when aligned with its ground-truth genesis anchor
+        # Dynamic manifold-calibrated minority consistency:
+        # Client's drift limiter is calibrated relative to its historical manifold dispersion (sim_self_mean - 1.5 * MAD)
         sim_a = behavioral_ev.sim_anchor
-        theta_a_eff = self._get_curriculum_anchor_threshold(current_round)
-        is_minority_consistent = (sim_a is not None and sim_a >= theta_a_eff)
-        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent or (sim_s is not None and sim_s >= self.theta_self_mature)
+        sim_mad = behavioral_ev.sim_self_mad if behavioral_ev.sim_self_mad is not None else 0.05
+        anchor_manifold_bound = max(self.theta_anchor_min, (sim_s - 1.5 * (1.4826 * sim_mad + 1e-6))) if sim_s is not None else self.theta_anchor_min
+        is_minority_consistent = (sim_a is not None and sim_a >= anchor_manifold_bound)
+        
+        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
+        # Spatial range: supports non-IID minority (sim_g < theta_cos) AND high consensus with moderate temporal jitter (sim_g >= theta_cos)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
 
-        # 3a. Mature Behavioral Downweight (depth >= 3, verified historical self-consistency)
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
             is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
@@ -274,22 +252,9 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 4: Ambiguous / Borderline Evidence (QUARANTINE)
         # ---------------------------------------------------------------------
-        # Checked before Priority 3b so borderline ambiguous updates from immature profiles
-        # (|sim_g - theta_cos| <= delta_borderline under mature spatial reference) are quarantined
-        # to await reference centroid stabilization rather than unconditionally downweighted under Priority 3b.
         if self.enable_quarantine:
-            is_borderline_spatial = (
-                sim_g is not None
-                and abs(sim_g - self.theta_cos) <= self.delta_borderline
-                and not behavioral_ev.behavioral_mature
-                and spatial_ev.spatial_mature
-            )
-            is_moderate_temporal_trusted = (
-                temporal_ev.temporal_mature
-                and 0.0 < g_margin <= self.delta_temp_mod
-                and I_i >= self.trusted_integrity_min
-                and (sim_g is None or sim_g >= 0.0)
-            )
+            is_borderline_spatial = (sim_g is not None and abs(sim_g - self.theta_cos) <= self.delta_borderline and not behavioral_ev.behavioral_mature)
+            is_moderate_temporal_trusted = (temporal_ev.temporal_mature and 0.0 < g_margin <= self.delta_temp_mod and I_i >= self.trusted_integrity_min and (sim_g is None or sim_g >= 0.0))
 
             if is_borderline_spatial or is_moderate_temporal_trusted:
                 return JointDecisionOutcome(

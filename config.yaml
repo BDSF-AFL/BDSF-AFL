@@ -23,8 +23,8 @@ lognormal_sigma: 1.0
 fedprox_mu: 0.01             # proximal regularization to bound non-IID trajectory deviation
 
 # Server aggregation & Optimization (Phase 5)
-eta: 0.10                   # calibrated server learning rate for 20-client asynchronous aggregation
-server_momentum: 0.50                # Momentum-enhanced asynchronous aggregation (FedAvgM)
+eta: 0.01                   # calibrated server learning rate for asynchronous aggregation
+server_momentum: 0.0        # Momentum-enhanced asynchronous aggregation (0.0 = baseline FedAvg)
 model_architecture: "resnet18"       # resnet18 (CIFAR-10 Adapted) | cnn (Legacy baseline) | mlp (MNIST)
 early_stopping: false                # Automated convergence stopping
 early_stopping_patience: 10          # Consecutive evaluations without gain before early stopping (10 evals = 100 rounds)
@@ -40,31 +40,48 @@ use_tukey: true          # ablation: false = raw Q1/Q3
 fixed_K: false           # ablation: true = disable adaptive K_t
 
 # Spatial validator (Pillar 3)
-K_ref: 12
-M: 60
+K_ref: 10
+M: 30
 theta_cos: 0.1
-theta_self: 0.00        # gentle initialization threshold during early exploration
-theta_self_mature: 0.35 # robust identity threshold for mature clients (honest >= 0.75 vs byz <= 0.20)
-theta_floor: 0.40       # wide non-IID tolerance for single-class Dirichlet skew
-theta_anchor_min: -0.20 # baseline floor for early exploration
-theta_anchor_mature: 0.40 # robust genesis anchor alignment for mature clients (honest >= 0.60 vs byz <= 0.30)
+theta_self: 0.60        # strict identity threshold (honest >= 0.70 vs byz <= 0.30)
+theta_self_mature: 0.60 # robust identity threshold for mature clients
+theta_floor: 0.15       # strict directional boundary: reject if sim_global < -theta_floor
+theta_anchor_min: 0.50  # minimum cosine similarity to Genesis Anchor
+theta_anchor_mature: 0.50 # robust genesis anchor alignment for mature clients
 gamma_clip: 1.5
 top_k_ref: true          # always topk reference
-adaptive_clip_enabled: false  # static clip until mature norm distribution is established
+adaptive_clip_enabled: true  # dynamic adaptive norm clipping
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
-spatial_warmup_rounds: 20     # 20 rounds (400 updates) guarantees full 20-client round-robin initialization
+spatial_warmup_rounds: 20     # guarantees full round-robin initialization
 norm_anomaly_threshold: 2.5   # corroboration required alongside inversion
 
 # Reputation (Pillar 2)
-alpha_I: 0.4
-alpha_P: 0.2
-beta_I: 0.02
-beta_P: 0.05
+alpha_I: 0.30
+alpha_P: 0.20
+beta_I: 0.05
+beta_P: 0.08
 # Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
 spatial_grace_k: 2
 temporal_grace_k: 3    # straggler rejections allowed before P_i is slashed
 borderline_margin: 0.10
 borderline_limit: 5
+
+# Joint Decision Engine & Multi-Action Filtering (Phase 3)
+decision_mode: "joint"            # "joint" | "legacy"
+warm_start_mode: "state_maturity" # "state_maturity" (Adaptive) | "fixed" (Legacy 80)
+temporal_min_samples: 20          # Minimum gap observations for temporal maturity
+behavioral_min_depth: 3           # Trajectory history depth for behavioral maturity
+warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
+alpha_downweight: 0.35            # Base weight attenuation for non-IID updates
+K_drift_max: 5                    # Max consecutive downweights before threshold escalation
+delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
+delta_theta_max: 0.25             # Maximum total threshold penalty
+delta_temp_mod: 0.50              # Moderate temporal anomaly margin fraction
+enable_quarantine: true           # Enable bounded quarantine state machine
+quarantine_horizon: 5             # Maximum rounds an update is held before expiry
+quarantine_capacity: 20           # Maximum updates held in quarantine buffer
+delta_borderline: 0.05            # Spatial margin around theta_cos for quarantine
+trusted_integrity_min: 0.80       # Minimum integrity score I_i for moderate temporal quarantine
 
 # Attack simulation
 byz_fraction: 0.2        # 0.1 | 0.2 | 0.3; 0.5 for boundary test
