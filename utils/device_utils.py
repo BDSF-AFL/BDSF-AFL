@@ -50,7 +50,7 @@ def resolve_device(config: dict | None = None):
     return device
 
 
-def resolve_all_devices() -> list:
+def resolve_all_devices(config: dict | None = None) -> list:
     """Return list of all available GPU devices, or [cpu] as fallback.
 
     On a dual-T4 Kaggle instance this returns [cuda:0, cuda:1].
