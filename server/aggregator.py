@@ -93,8 +93,8 @@ class AggregatorServer:
             self.registry[cid] = ClientRegistration(
                 client_id=cid,
                 session_key=session_key,
-                last_update_time=self.get_virtual_time(),
-                pull_time=self.get_virtual_time(),
+                last_update_time=0.0,
+                pull_time=0.0,
                 is_byzantine=False,
             )
 
@@ -106,6 +106,9 @@ class AggregatorServer:
 
         # Step 15b: Monotonic server model version counter
         self.model_version: int = 0
+
+        # Step 15c: Global simulation virtual clock
+        self.virtual_time: float = 0.0
 
         # Step 16: Baseline aggregation configs
         self.aggregation = config.get("aggregation", "bdsf_afl")
@@ -130,6 +133,10 @@ class AggregatorServer:
         cid = submission.client_id
         reg = self.registry[cid]
         t_now = submission.t_submit
+        
+        # Advance global virtual timeline monotonically
+        self.virtual_time = max(self.virtual_time, t_now)
+        
         g_i = t_now - reg.last_update_time
         I_i, P_i = self.rep_manager.get(cid)
         pulled_version = getattr(submission, "model_version_at_pull", 0)
@@ -923,8 +930,8 @@ class AggregatorServer:
         self.registry[client_id].pull_time = pull_time
 
     def get_virtual_time(self) -> float:
-        """Returns the current virtual timeline time (excluding blocking evaluation periods)."""
-        return time.time() - self.total_eval_time
+        """Returns the current simulation virtual timeline clock."""
+        return self.virtual_time
 
     def _apply_global_update(self, effective_delta: torch.Tensor) -> None:
         """Applies momentum-enhanced asynchronous aggregation and increments model version.
@@ -956,6 +963,7 @@ class AggregatorServer:
             "round_number": self.round_number,
             "update_counter": self.update_counter,
             "model_version": self.model_version,
+            "virtual_time": self.virtual_time,
             "rep_scores": {cid: {"I": s["I"], "P": s["P"]} for cid, s in self.rep_manager.scores.items()},
             "rep_history": {cid: list(h) for cid, h in self.rep_manager._history.items()},
             "spatial_streaks": dict(self.rep_manager.spatial_reject_streak),
@@ -975,6 +983,7 @@ class AggregatorServer:
         self.round_number = state.get("round_number", self.round_number)
         self.update_counter = state.get("update_counter", self.update_counter)
         self.model_version = state.get("model_version", self.model_version)
+        self.virtual_time = state.get("virtual_time", getattr(self, "virtual_time", 0.0))
         if "rep_scores" in state:
             for cid, s in state["rep_scores"].items():
                 if cid in self.rep_manager.scores:

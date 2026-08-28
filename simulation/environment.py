@@ -70,19 +70,21 @@ class AttackInjectorWrapper:
         self.client = client
         self.injector = injector
         self.server = server
-        self.last_update_time = self.server.get_virtual_time()  # Track locally to compute honest_g_i
- 
+        self.last_update_time = 0.0
+
     async def run_one_round(self) -> dict:
         # 1. Pull global weights or use force-synced weights
+        server_vtime = self.server.get_virtual_time()
+        tau = max(server_vtime, self.client._last_submit_time)
+
         if self.client._state.get("force_sync_applied", False):
             W_global = self.client._state["W_local"].clone()
-            tau = self.client._state.get("last_reset_time", self.server.get_virtual_time())
+            tau = max(tau, self.client._state.get("last_reset_time", 0.0))
             version_at_pull = self.server.get_model_version()
             self.server.update_pull_time(self.client.client_id, tau)
             self.client._state["force_sync_applied"] = False
             self.client._state["model_version_at_pull"] = version_at_pull
         else:
-            tau = self.server.get_virtual_time()
             W_global = self.server.get_global_weights()
             version_at_pull = self.server.get_model_version()
             self.server.update_pull_time(self.client.client_id, tau)
@@ -125,6 +127,7 @@ class AttackInjectorWrapper:
 
         # Build submission with modified delta_W and modified timing (t_submit = last_update_time + modified_g)
         t_submit_modified = self.last_update_time + modified_g
+        self.client._last_submit_time = t_submit_modified
         
         submission = UpdateSubmission(
             client_id=self.client.client_id,
@@ -139,9 +142,11 @@ class AttackInjectorWrapper:
 
         # 7. Handle force_sync if present
         if response.get("force_sync") is not None:
-            self.client.fs_handler.verify_and_apply(response["force_sync"], self.client._state)
-            # Reset last update time to the force sync timestamp
-            self.last_update_time = response["force_sync"].timestamp
+            self.client._state["current_virtual_time"] = self.server.get_virtual_time()
+            if self.client.fs_handler.verify_and_apply(response["force_sync"], self.client._state):
+                # Reset last update time to the force sync timestamp
+                self.last_update_time = response["force_sync"].timestamp
+                self.client._last_submit_time = response["force_sync"].timestamp
 
         # Update last update time if the update was NOT rejected by the temporal gate.
         if response.get("reason") not in ("TEMPORAL_HIGH_FREQ", "TEMPORAL_STRAGGLER"):

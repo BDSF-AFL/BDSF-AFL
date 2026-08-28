@@ -22,16 +22,19 @@ class ClientNode:
         self._mu_delay = config.get("lognormal_mu", 0.5)
         self._sigma_delay = config.get("lognormal_sigma", 1.0)
         self._T_base = config.get("T_base", 1.0)
+        self._last_submit_time: float = 0.0
 
     async def run_one_round(self) -> dict:
         # 1. Pull global weights or use force-synced weights
+        server_vtime = self.server.get_virtual_time()
+        tau = max(server_vtime, self._last_submit_time)
+
         if self._state.get("force_sync_applied", False):
             W_global = self._state["W_local"].clone()
-            tau = self._state.get("last_reset_time", self.server.get_virtual_time())
+            tau = max(tau, self._state.get("last_reset_time", 0.0))
             self.server.update_pull_time(self.client_id, tau)
             self._state["force_sync_applied"] = False
         else:
-            tau = self.server.get_virtual_time()
             W_global = self.server.get_global_weights()
             self.server.update_pull_time(self.client_id, tau)
             self._state["W_local"] = W_global.clone()
@@ -48,8 +51,9 @@ class ClientNode:
         current_round = getattr(self.server, "round_number", 0)
         delta_W = self.trainer.train(W_global, current_round=current_round)
  
-        # 4. Build submission
+        # 4. Build submission with monotonic virtual timestamp
         t_submit = tau + delay
+        self._last_submit_time = t_submit
         submission = UpdateSubmission(
             client_id=self.client_id,
             delta_W=delta_W,
@@ -63,7 +67,9 @@ class ClientNode:
 
         # 6. Handle force_sync if present
         if response.get("force_sync") is not None:
-            self.fs_handler.verify_and_apply(response["force_sync"], self._state)
+            self._state["current_virtual_time"] = self.server.get_virtual_time()
+            if self.fs_handler.verify_and_apply(response["force_sync"], self._state):
+                self._last_submit_time = response["force_sync"].timestamp
 
         return response
 
