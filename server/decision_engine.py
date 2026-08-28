@@ -212,12 +212,10 @@ class JointDecisionEngine:
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
         
-        # Dynamic manifold-calibrated minority consistency:
-        # Client's drift limiter is calibrated relative to its historical manifold dispersion (sim_self_mean - 1.5 * MAD)
+        # Dynamic minority consistency:
+        # Client is proven authentic minority non-IID node when aligned with its Genesis Anchor
         sim_a = behavioral_ev.sim_anchor
-        sim_mad = behavioral_ev.sim_self_mad if behavioral_ev.sim_self_mad is not None else 0.05
-        anchor_manifold_bound = max(self.theta_anchor_min, (sim_s - 1.5 * (1.4826 * sim_mad + 1e-6))) if sim_s is not None else self.theta_anchor_min
-        is_minority_consistent = (sim_a is not None and sim_a >= anchor_manifold_bound)
+        is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
         
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)

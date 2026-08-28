@@ -45,7 +45,7 @@ M: 30
 theta_cos: 0.1
 theta_self: 0.60        # strict identity threshold (honest >= 0.70 vs byz <= 0.30)
 theta_self_mature: 0.60 # robust identity threshold for mature clients
-theta_floor: 0.15       # strict directional boundary: reject if sim_global < -theta_floor
+theta_floor: 0.40       # calibrated directional floor for ResNet-18 Non-IID Dirichlet skew
 theta_anchor_min: 0.50  # minimum cosine similarity to Genesis Anchor
 theta_anchor_mature: 0.50 # robust genesis anchor alignment for mature clients
 gamma_clip: 1.5
@@ -73,7 +73,7 @@ temporal_min_samples: 20          # Minimum gap observations for temporal maturi
 behavioral_min_depth: 3           # Trajectory history depth for behavioral maturity
 warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
 alpha_downweight: 0.35            # Base weight attenuation for non-IID updates
-K_drift_max: 5                    # Max consecutive downweights before threshold escalation
+K_drift_max: 10                   # Max consecutive downweights before threshold escalation
 delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
 delta_theta_max: 0.25             # Maximum total threshold penalty
 delta_temp_mod: 0.50              # Moderate temporal anomaly margin fraction
