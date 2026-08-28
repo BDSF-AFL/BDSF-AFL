@@ -26,6 +26,10 @@ experiment:
   theta_prc: 0.20
   theta_prc_hard: -0.10
   prc_buffer_k: 10
+  theta_tra: 0.45
+  suspicion_decay: 0.60
+  suspicion_step: 0.20
+  suspicion_reject_thresh: 0.65
   static_clip_C: 10.0
   spatial_warmup_rounds: 20
   norm_anomaly_threshold: 1.35

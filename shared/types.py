@@ -67,6 +67,9 @@ class SpatialEvidence:
     spatial_reference_count: int = 0               # Count of positive contributors in buffer
     spatial_coherence: float = 0.0                 # Consensus coherence: ||(1/K)*sum(g_hat)||_2 in [0, 1]
     prc_score: Optional[float] = None              # Pairwise Residual Coherence: mean cosine of orthogonal residuals vs recent buffer
+    tra_score: Optional[float] = None              # Temporal Residual Autocorrelation: cos(r_t, r_t-1)
+    suspicion_score: float = 0.0                   # Multi-round suspicion accumulator S_i in [0.0, 1.0]
+    oer_score: Optional[float] = None              # Orthogonal Energy Ratio: 1 - cos(delta_W, ref)^2
 
     def __post_init__(self):
         if self.spatial_mature is None:

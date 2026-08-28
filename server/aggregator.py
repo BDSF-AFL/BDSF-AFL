@@ -487,6 +487,9 @@ class AggregatorServer:
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     prc_score=spatial_evidence.prc_score,
+                    tra_score=spatial_evidence.tra_score,
+                    suspicion_score=spatial_evidence.suspicion_score,
+                    oer_score=spatial_evidence.oer_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 ret_val = {
@@ -555,6 +558,9 @@ class AggregatorServer:
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     prc_score=spatial_evidence.prc_score,
+                    tra_score=spatial_evidence.tra_score,
+                    suspicion_score=spatial_evidence.suspicion_score,
+                    oer_score=spatial_evidence.oer_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 ret_val = {
@@ -613,6 +619,9 @@ class AggregatorServer:
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     prc_score=spatial_evidence.prc_score,
+                    tra_score=spatial_evidence.tra_score,
+                    suspicion_score=spatial_evidence.suspicion_score,
+                    oer_score=spatial_evidence.oer_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 return {
@@ -635,6 +644,10 @@ class AggregatorServer:
                     reg.last_update_time = fs_payload.timestamp
                 elif outcome.primary_reason == "HARD_GUARD_TEMPORAL_SPAM":
                     self.rep_manager.reduce_pace(cid)
+                elif outcome.primary_reason == "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT":
+                    # Damped soft slash for persistent temporal residual incoherence
+                    self.rep_manager.record_spatial_rejection(cid)
+                    reg.last_update_time = t_now
                 else:
                     self.rep_manager.record_spatial_rejection(cid)
                     reg.last_update_time = t_now
@@ -671,6 +684,9 @@ class AggregatorServer:
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
                     prc_score=spatial_evidence.prc_score,
+                    tra_score=spatial_evidence.tra_score,
+                    suspicion_score=spatial_evidence.suspicion_score,
+                    oer_score=spatial_evidence.oer_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 self.consecutive_rejects += 1
@@ -995,6 +1011,7 @@ class AggregatorServer:
             "spatial_state": self.spatial_validator.get_state(),
             "behavioral_profiles": self.behavioral_memory.get_state(),
             "quarantine_state": self.quarantine_manager.get_state(),
+            "decision_engine_state": self.decision_engine.get_state(),
         }
 
     def load_state(self, state: dict) -> None:
@@ -1032,6 +1049,9 @@ class AggregatorServer:
         quar_state = state.get("quarantine_state") or state.get("quarantine_manager")
         if quar_state:
             self.quarantine_manager.load_state(quar_state)
+        de_state = state.get("decision_engine_state") or state.get("decision_engine")
+        if de_state and hasattr(self.decision_engine, "load_state"):
+            self.decision_engine.load_state(de_state)
 
     def accumulate_eval_time(self, duration: float) -> None:
         """Accrues CPU execution time spent on blocking evaluations."""

@@ -23,8 +23,8 @@ class BDSFLogger:
             "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
             "weight", "action",
             "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
-            "sim_anchor", "sim_frozen_anchor", "anchor_drift", "consecutive_dw", "prc_score", "quarantine_depth",
-            "v_momentum_norm"
+            "sim_anchor", "sim_frozen_anchor", "anchor_drift", "consecutive_dw", "prc_score", "tra_score",
+            "suspicion_score", "oer_score", "quarantine_depth", "v_momentum_norm"
         ]
         
         is_resume = config.get("resume", False) and os.path.exists(self.csv_path)
@@ -84,6 +84,9 @@ class BDSFLogger:
                    anchor_drift: Optional[float] = None,
                    consecutive_dw: Optional[int] = None,
                    prc_score: Optional[float] = None,
+                   tra_score: Optional[float] = None,
+                   suspicion_score: Optional[float] = None,
+                   oer_score: Optional[float] = None,
                    quarantine_depth: Optional[int] = None,
                    v_momentum_norm: Optional[float] = None) -> None:
         """Log update status and metadata. Appends to list and CSV."""
@@ -125,6 +128,9 @@ class BDSFLogger:
             "anchor_drift": anchor_drift,
             "consecutive_dw": consecutive_dw,
             "prc_score": prc_score,
+            "tra_score": tra_score,
+            "suspicion_score": suspicion_score,
+            "oer_score": oer_score,
             "quarantine_depth": quarantine_depth,
             "v_momentum_norm": v_momentum_norm,
         }
@@ -162,6 +168,9 @@ class BDSFLogger:
         adr_val = f"{anchor_drift:.6f}" if anchor_drift is not None else ""
         cdw_val = str(consecutive_dw) if consecutive_dw is not None else ""
         prc_val = f"{prc_score:.6f}" if prc_score is not None else ""
+        tra_val = f"{tra_score:.6f}" if tra_score is not None else ""
+        susp_val = f"{suspicion_score:.6f}" if suspicion_score is not None else ""
+        oer_val = f"{oer_score:.6f}" if oer_score is not None else ""
         qd_val = str(quarantine_depth) if quarantine_depth is not None else ""
         vm_val = f"{v_momentum_norm:.6f}" if v_momentum_norm is not None else ""
         
@@ -175,7 +184,8 @@ class BDSFLogger:
                 sim_g_val, nr_val, nc_val, nrm_val, dbc_val, ra_val,
                 w_val, act_val,
                 ss_mean_val, ss_max_val, nd_self_val, cc_val, hd_val,
-                sa_val, sfa_val, adr_val, cdw_val, prc_val, qd_val,
+                sa_val, sfa_val, adr_val, cdw_val, prc_val, tra_val,
+                susp_val, oer_val, qd_val,
                 vm_val
             ])
             f.flush()
@@ -219,8 +229,8 @@ class BDSFLogger:
             "sim_global", "norm_raw", "norm_clipped", "norm_ratio_median", "dynamic_bound_C", "reference_available",
             "weight", "action",
             "sim_self_mean", "sim_self_max", "norm_deviation_self", "cadence_consistency", "history_depth",
-            "sim_anchor", "sim_frozen_anchor", "anchor_drift", "consecutive_dw", "prc_score", "quarantine_depth",
-            "v_momentum_norm"
+            "sim_anchor", "sim_frozen_anchor", "anchor_drift", "consecutive_dw", "prc_score", "tra_score",
+            "suspicion_score", "oer_score", "quarantine_depth", "v_momentum_norm"
         ]
         clean_rows = []
         try:

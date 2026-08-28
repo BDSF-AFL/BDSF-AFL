@@ -39,13 +39,14 @@ class JointDecisionEngine:
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
         self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 1.35))
         # --- Pairwise Residual Coherence (PRC) thresholds ---
-        # theta_prc: minimum PRC score for full-weight P2 acceptance.
-        #   S2 mimicry has PRC ≈ 0-0.12; honest has PRC > 0.60-0.90 (shared class structure).
-        #   Updates failing this gate fall through to P3 (DOWNWEIGHT) instead of P2 (ACCEPT).
         self.theta_prc: float = config.get("theta_prc", 0.20)
-        # theta_prc_hard: PRC below this triggers hard rejection in P5 + integrity slash.
-        #   A deeply negative PRC indicates the residual is anti-correlated with other clients.
         self.theta_prc_hard: float = config.get("theta_prc_hard", -0.10)
+        # --- Temporal Residual Autocorrelation (TRA) & Suspicion Accumulator ---
+        self.theta_tra: float = float(config.get("theta_tra", 0.45))
+        self.suspicion_decay: float = float(config.get("suspicion_decay", 0.60))
+        self.suspicion_step: float = float(config.get("suspicion_step", 0.20))
+        self.suspicion_reject_thresh: float = float(config.get("suspicion_reject_thresh", 0.65))
+        self.suspicion_scores: dict[int, float] = {}
 
     def evaluate(
         self,
@@ -77,6 +78,18 @@ class JointDecisionEngine:
         v_lag = version_lag if version_lag != 0 else getattr(temporal_ev, "version_lag", 0)
         sim_frozen = getattr(behavioral_ev, "sim_frozen_anchor", None)
         drift_a = getattr(behavioral_ev, "anchor_drift", None)
+
+        # Multi-Round Suspicion Accumulator & Temporal Residual Autocorrelation (TRA)
+        tra = spatial_ev.tra_score
+        oer = spatial_ev.oer_score
+        if spatial_ev.spatial_mature and tra is not None:
+            # If residual has high orthogonal energy AND near-zero autocorrelation across rounds:
+            if tra < self.theta_tra and (oer is not None and oer >= 0.65):
+                self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
+            elif tra >= self.theta_tra or (sim_g is not None and sim_g >= 0.35):
+                self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
+        S_i = self.suspicion_scores.get(cid, 0.0)
+        spatial_ev.suspicion_score = S_i
 
         # ---------------------------------------------------------------------
         # PRIORITY 0a: Universal Safety Pre-Check (Active ALWAYS, even during warmup)
@@ -208,8 +221,10 @@ class JointDecisionEngine:
         is_prc_valid = (prc is None or prc >= self.theta_prc)
         # Norm Ratio Gate: S2 Mimicry adds orthogonal noise inflating ||dW|| by +123% (2.236x median).
         is_norm_valid = (spatial_ev.norm_ratio_median is None or spatial_ev.norm_ratio_median <= self.norm_anomaly_threshold)
+        # Multi-Round Suspicion Check: ensure client has not accumulated persistent suspicion
+        is_suspicion_clean = (S_i < 0.30)
 
-        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_prc_valid and is_norm_valid:
+        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_prc_valid and is_norm_valid and is_suspicion_clean:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
@@ -224,6 +239,8 @@ class JointDecisionEngine:
                     "anchor_drift": drift_a,
                     "version_lag": v_lag,
                     "prc_score": prc,
+                    "tra_score": tra,
+                    "suspicion_score": S_i,
                 }
             )
 
@@ -249,12 +266,30 @@ class JointDecisionEngine:
             sim_s is not None and sim_s >= theta_self_eff and
             is_anchor_valid and is_drift_bounded and is_temporal_tolerable):
             
-            # Confidence-weighted attenuation factor
-            conf_factor = min(1.0, max(0.5, (sim_s - self.theta_self) / (1.0 - self.theta_self + 1e-6)))
+            # If persistent multi-round suspicion has accumulated, reject without downweighting
+            if S_i >= self.suspicion_reject_thresh:
+                return JointDecisionOutcome(
+                    action="REJECT",
+                    primary_reason="TEMPORAL_RESIDUAL_INCOHERENCE_REJECT",
+                    aggregation_weight=0.0,
+                    force_sync_required=False,
+                    diagnostic_features={
+                        "priority": 5,
+                        "tra_score": tra,
+                        "suspicion_score": S_i,
+                        "sim_g": sim_g,
+                        "sim_s": sim_s,
+                        "version_lag": v_lag,
+                    }
+                )
+
+            # Confidence-weighted attenuation factor with progressive suspicion modulation
+            conf_factor = min(1.0, max(0.2, (1.0 - S_i) * (sim_s - self.theta_self) / (1.0 - self.theta_self + 1e-6)))
             alpha_eff = self.alpha_downweight * conf_factor
+            reason = "PROGRESSIVE_SUSPICION_DOWNWEIGHT" if S_i >= 0.30 else "NON_IID_HONEST_CONSISTENCY"
             return JointDecisionOutcome(
                 action="DOWNWEIGHT",
-                primary_reason="NON_IID_HONEST_CONSISTENCY",
+                primary_reason=reason,
                 aggregation_weight=alpha_eff * (I_i * P_i),
                 force_sync_required=False,
                 diagnostic_features={
@@ -266,7 +301,9 @@ class JointDecisionEngine:
                     "sim_frozen_anchor": sim_frozen,
                     "anchor_drift": drift_a,
                     "version_lag": v_lag,
-                    "is_minority_consistent": is_minority_consistent
+                    "is_minority_consistent": is_minority_consistent,
+                    "tra_score": tra,
+                    "suspicion_score": S_i,
                 }
             )
 
@@ -312,16 +349,19 @@ class JointDecisionEngine:
                     "sim_frozen_anchor": sim_frozen,
                     "anchor_drift": drift_a,
                     "version_lag": v_lag,
-                    "is_minority_consistent": is_minority_consistent
+                    "is_minority_consistent": is_minority_consistent,
+                    "tra_score": tra,
+                    "suspicion_score": S_i,
                 }
             )
 
         # ---------------------------------------------------------------------
         # PRIORITY 5: Adversarial / Inconsistent Fallthrough (REJECT)
         # ---------------------------------------------------------------------
+        primary_reason = "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT" if S_i >= self.suspicion_reject_thresh else "UNCOORDINATED_OR_ADVERSARIAL_REJECT"
         return JointDecisionOutcome(
             action="REJECT",
-            primary_reason="UNCOORDINATED_OR_ADVERSARIAL_REJECT",
+            primary_reason=primary_reason,
             aggregation_weight=0.0,
             force_sync_required=False,
             diagnostic_features={
@@ -332,5 +372,17 @@ class JointDecisionEngine:
                 "sim_frozen_anchor": sim_frozen,
                 "anchor_drift": drift_a,
                 "version_lag": v_lag,
+                "tra_score": tra,
+                "suspicion_score": S_i,
             }
         )
+
+    def get_state(self) -> dict:
+        """Serializes decision engine state for checkpoint equivalence."""
+        return {
+            "suspicion_scores": {int(k): float(v) for k, v in self.suspicion_scores.items()},
+        }
+
+    def load_state(self, state: dict) -> None:
+        """Restores decision engine state from checkpoint."""
+        self.suspicion_scores = {int(k): float(v) for k, v in state.get("suspicion_scores", {}).items()}

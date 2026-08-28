@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from models.resnet import CIFAR10ResNet18, MNISTMLP, CIFAR10CNN
 from server.aggregator import AggregatorServer
 from server.decision_engine import JointDecisionEngine
+from server.spatial_validator import SpatialValidator
 from server.quarantine_manager import QuarantineManager
 from server.behavioral_memory import BehavioralMemoryManager
 from server.reputation_manager import ReputationManager
@@ -690,7 +691,75 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(outcome_s2.action, "DOWNWEIGHT")
         self.assertLess(outcome_s2.aggregation_weight, 0.50)
 
+    def test_temporal_residual_autocorrelation_and_progressive_suspicion(self):
+        """Validates that Temporal Residual Autocorrelation (TRA) and the Multi-Round Suspicion
+        Accumulator reliably distinguish persistent class gradient structures from random orthogonal perturbations."""
+        cfg = {
+            "N_clients": 4,
+            "K_ref": 4,
+            "M": 10,
+            "theta_cos": 0.10,
+            "spatial_warmup_rounds": 4,
+            "theta_tra": 0.45,
+            "suspicion_step": 0.20,
+            "suspicion_decay": 0.60,
+            "suspicion_reject_thresh": 0.65,
+        }
+        sv = SpatialValidator(cfg)
+        engine = JointDecisionEngine(cfg)
+        
+        # Populate reference with 4 clients
+        ref_base = torch.tensor([1.0, 1.0, 0.0, 0.0])
+        for cid in range(4):
+            v = ref_base + torch.tensor([0.0, 0.0, 0.1 * (cid + 1), 0.0])
+            e = AcceptedEntry(delta_W=v, I_score=1.0, P_score=1.0, client_id=cid, is_warmup=False)
+            sv.on_accept(e)
+            sv.record_residual(cid, v)
+        
+        # 1. Honest client 0 submits round 1 and round 2 with persistent class structure
+        h_r1 = ref_base + torch.tensor([0.0, 0.0, 0.5, 0.0])
+        sv.record_residual(0, h_r1)
+        h_r2 = ref_base + torch.tensor([0.0, 0.0, 0.48, 0.0])
+        ev_h2 = sv.extract_evidence(h_r2, client_id=0)
+        self.assertIsNotNone(ev_h2.tra_score)
+        self.assertGreaterEqual(ev_h2.tra_score, 0.80, "Honest client must have high TRA across rounds")
+        
+        # 2. S2 Adversary (client 1) submits round 1 and round 2 with uncorrelated noise
+        s2_r1 = 0.2 * ref_base + torch.tensor([0.0, 0.0, 0.0, 0.8])
+        sv.record_residual(1, s2_r1)
+        s2_r2 = 0.2 * ref_base + torch.tensor([0.0, 0.0, 0.0, -0.8]) # flipped orthogonal noise
+        ev_s2 = sv.extract_evidence(s2_r2, client_id=1)
+        self.assertIsNotNone(ev_s2.tra_score)
+        self.assertLess(ev_s2.tra_score, 0.0, "S2 orthogonal noise must have low/negative TRA")
+        
+        # 3. Test progressive suspicion accumulation over multiple rounds
+        temp_ev = TemporalEvidence(g_i=10.0, lower_fence=5.0, upper_fence=20.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
+        beh_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.95, history_depth=5, sim_anchor=0.90, behavioral_mature=True)
+        
+        # Round 1: Suspicion increases to 0.20
+        out1 = engine.evaluate(1, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
+        self.assertAlmostEqual(engine.suspicion_scores[1], 0.20)
+        
+        # Round 2: Suspicion increases to 0.40 -> Progressive downweighting
+        out2 = engine.evaluate(1, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
+        self.assertAlmostEqual(engine.suspicion_scores[1], 0.40)
+        self.assertEqual(out2.action, "DOWNWEIGHT")
+        self.assertEqual(out2.primary_reason, "PROGRESSIVE_SUSPICION_DOWNWEIGHT")
+        
+        # Round 3 & 4: Suspicion reaches threshold 0.65+ -> Soft rejection
+        engine.evaluate(1, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
+        out4 = engine.evaluate(1, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
+        self.assertGreaterEqual(engine.suspicion_scores[1], 0.65)
+        self.assertEqual(out4.action, "REJECT")
+        self.assertEqual(out4.primary_reason, "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT")
+        
+        # 4. Test forgiveness & recovery for honest client
+        engine.suspicion_scores[0] = 0.40 # mock elevated suspicion
+        out_hon = engine.evaluate(0, temp_ev, ev_h2, beh_ev, 1.0, 1.0)
+        self.assertLess(engine.suspicion_scores[0], 0.40, "Honest client must experience suspicion decay")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
