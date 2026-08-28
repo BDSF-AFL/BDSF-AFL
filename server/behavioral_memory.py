@@ -50,9 +50,9 @@ class ClientBehavioralProfile:
 
         if is_downweight:
             self.consecutive_downweights += 1
-            # Damped micro-adaptation on verified self-consistent non-IID downweight to prevent anchor starvation
-            if sim_self >= 0.35:
-                self._update_anchor(unit_vec, lambda_anchor=0.02)
+            # Adaptive anchor tracking on verified self-consistent non-IID downweight to prevent anchor starvation
+            if sim_self >= 0.30:
+                self._update_anchor(unit_vec, lambda_anchor=0.10)
         else:
             self.consecutive_downweights = 0
             self._update_anchor(unit_vec, lambda_anchor=0.15)

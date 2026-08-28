@@ -24,7 +24,7 @@ fedprox_mu: 0.01             # proximal regularization to bound non-IID trajecto
 
 # Server aggregation & Optimization (Phase 5)
 eta: 0.01                   # calibrated server learning rate for asynchronous aggregation
-server_momentum: 0.0        # Momentum-enhanced asynchronous aggregation (0.0 = baseline FedAvg)
+server_momentum: 0.90       # Momentum-enhanced asynchronous aggregation (FedAvgM beta_m=0.90)
 model_architecture: "resnet18"       # resnet18 (CIFAR-10 Adapted) | cnn (Legacy baseline) | mlp (MNIST)
 early_stopping: false                # Automated convergence stopping
 early_stopping_patience: 10          # Consecutive evaluations without gain before early stopping (10 evals = 100 rounds)
@@ -46,14 +46,14 @@ theta_cos: 0.1
 theta_self: 0.30        # calibrated identity threshold for ResNet-18 non-IID manifolds
 theta_self_mature: 0.30 # calibrated identity threshold for mature clients
 theta_floor: 0.40       # calibrated directional floor for ResNet-18 Non-IID Dirichlet skew
-theta_anchor_min: 0.50  # minimum cosine similarity to Genesis Anchor
-theta_anchor_mature: 0.50 # robust genesis anchor alignment for mature clients
+theta_anchor_min: 0.25  # calibrated anchor threshold tracking loss surface gradient rotation
+theta_anchor_mature: 0.25 # robust genesis anchor alignment for mature clients
 gamma_clip: 1.2              # tightened from 1.5 — ensures adaptive clipping triggers on S2 norm inflation
 top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true  # dynamic adaptive norm clipping
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
 spatial_warmup_rounds: 20     # guarantees full round-robin initialization
-norm_anomaly_threshold: 2.5   # corroboration required alongside inversion
+norm_anomaly_threshold: 1.35  # blocks S2 +123% norm-inflated updates (threshold 1.35x median)
 # Pairwise Residual Coherence (PRC) — 4th defense pillar
 theta_prc: 0.20              # minimum PRC for full P2 acceptance (S2 has PRC ≈ 0-0.12, honest > 0.60)
 theta_prc_hard: -0.10        # hard reject + slash when residual is anti-correlated

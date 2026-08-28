@@ -26,7 +26,7 @@ class JointDecisionEngine:
         self.theta_cos: float = config.get("theta_cos", 0.10)
         self.theta_self: float = config.get("theta_self", 0.30)
         self.theta_floor: float = config.get("theta_floor", 0.40)
-        self.theta_anchor_min: float = config.get("theta_anchor_min", 0.50)
+        self.theta_anchor_min: float = config.get("theta_anchor_min", 0.25)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 10)
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
@@ -37,7 +37,7 @@ class JointDecisionEngine:
         self.trusted_integrity_min: float = config.get("trusted_integrity_min", 0.80)
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
-        self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 2.5))
+        self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 1.35))
         # --- Pairwise Residual Coherence (PRC) thresholds ---
         # theta_prc: minimum PRC score for full-weight P2 acceptance.
         #   S2 mimicry has PRC ≈ 0-0.12; honest has PRC > 0.60-0.90 (shared class structure).
@@ -199,8 +199,10 @@ class JointDecisionEngine:
         # None = not yet computed (warmup/insufficient buffer) → pass through.
         prc = spatial_ev.prc_score
         is_prc_valid = (prc is None or prc >= self.theta_prc)
+        # Norm Ratio Gate: S2 Mimicry adds orthogonal noise inflating ||dW|| by +123% (2.236x median).
+        is_norm_valid = (spatial_ev.norm_ratio_median is None or spatial_ev.norm_ratio_median <= self.norm_anomaly_threshold)
 
-        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_prc_valid:
+        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_prc_valid and is_norm_valid:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
