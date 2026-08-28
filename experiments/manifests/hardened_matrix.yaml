@@ -35,7 +35,7 @@ experiment:
   static_clip_C: 10.0
   spatial_warmup_rounds: 100
   temporal_min_samples: 100
-  norm_anomaly_threshold: 1.18
+  norm_anomaly_threshold: 1.30
   enable_quarantine: true
   quarantine_horizon: 5
   quarantine_capacity: 20

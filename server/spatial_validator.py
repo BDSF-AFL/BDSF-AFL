@@ -53,11 +53,9 @@ class SpatialValidator:
     # ------------------------------------------------------------------
 
     def _get_positive_norms(self) -> List[float]:
-        """Extracts finite positive Euclidean norms from the accepted buffer, skipping warmup entries."""
+        """Extracts finite positive Euclidean norms from all accepted buffer entries."""
         pos_norms = []
         for e in self._buffer:
-            if getattr(e, "is_warmup", False):
-                continue
             n = torch.norm(e.delta_W.flatten().float()).item()
             if np.isfinite(n) and n > EPS:
                 pos_norms.append(n)

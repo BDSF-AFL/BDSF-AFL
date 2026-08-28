@@ -34,7 +34,7 @@ experiment:
   static_clip_C: 10.0
   spatial_warmup_rounds: 100
   temporal_min_samples: 100
-  norm_anomaly_threshold: 1.18
+  norm_anomaly_threshold: 1.30
   min_integrity_floor: 0.10
 
   algorithms:

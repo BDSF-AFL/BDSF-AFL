@@ -53,7 +53,7 @@ top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true  # dynamic adaptive norm clipping
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
 spatial_warmup_rounds: 100    # 100 updates (5 rounds across 20 clients) for clean initialization
-norm_anomaly_threshold: 1.18  # blocks S2 +25-31% norm-inflated updates (threshold 1.18x median)
+norm_anomaly_threshold: 1.30  # blocks S2 +123% norm-inflated updates (threshold 1.30x mature median)
 # Pairwise Residual Coherence (PRC) & Temporal Residual Autocorrelation (TRA)
 theta_prc: 0.20              # minimum PRC for full P2 acceptance (S2 has PRC ≈ 0-0.12, honest > 0.60)
 theta_prc_hard: -0.10        # hard reject + slash when residual is anti-correlated
