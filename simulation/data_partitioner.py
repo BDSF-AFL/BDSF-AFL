@@ -9,13 +9,14 @@ from typing import List
 _PIN_MEMORY = torch.cuda.is_available()
 
 class DataPartitioner:
-    def __init__(self, config: dict):
-        self.dataset_name = config.get("dataset", "CIFAR10")
-        self.data_dir = self._resolve_data_dir(config)
-        self.N = config.get("N_clients", config.get("N", 20))
-        self.dirichlet_alpha = config.get("dirichlet_alpha", 0.1)
-        self.seed = config.get("seed", 42)
-        self.batch_size = config.get("batch_size", 32)
+    def __init__(self, config: dict = None, dataset_name: str = None, N_clients: int = None, alpha: float = None, batch_size: int = None, seed: int = None, data_dir: str = None, **kwargs):
+        cfg = config or {}
+        self.dataset_name = dataset_name or cfg.get("dataset", "CIFAR10")
+        self.data_dir = self._resolve_data_dir(cfg, data_dir)
+        self.N = N_clients or cfg.get("N_clients", cfg.get("N", 20))
+        self.dirichlet_alpha = alpha if alpha is not None else cfg.get("dirichlet_alpha", 0.1)
+        self.seed = seed if seed is not None else cfg.get("seed", 42)
+        self.batch_size = batch_size or cfg.get("batch_size", 32)
         
         # Set transforms
         if self.dataset_name == "MNIST":
@@ -29,9 +30,14 @@ class DataPartitioner:
                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
             ])
 
-    def _resolve_data_dir(self, config: dict) -> str:
+    def get_dataloaders(self):
+        """Convenience method returning (train_loaders, test_loader)."""
+        return self.partition(), self.get_test_loader()
+
+    def _resolve_data_dir(self, config: dict = None, data_dir: str = None) -> str:
         """Resolves existing data directory, checking Kaggle paths before fallback."""
-        configured_dir = config.get("data_dir")
+        cfg = config or {}
+        configured_dir = data_dir or cfg.get("data_dir")
         if configured_dir:
             if configured_dir.endswith("cifar-10-batches-py") and os.path.exists(configured_dir):
                 return os.path.dirname(configured_dir)
