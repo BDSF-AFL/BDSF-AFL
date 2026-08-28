@@ -82,7 +82,7 @@ def configure_algorithm(base_config: dict, algo_name: str) -> dict:
         cfg["enable_quarantine"] = True
         cfg["use_tukey"] = True
         cfg["top_k_ref"] = True
-        cfg["adaptive_clip_enabled"] = cfg.get("adaptive_clip_enabled", False)
+        cfg["adaptive_clip_enabled"] = cfg.get("adaptive_clip_enabled", True)
         cfg["warmup_weight_factor"] = 0.5
     else:
         raise ValueError(f"Unknown algorithm: {algo_name}")

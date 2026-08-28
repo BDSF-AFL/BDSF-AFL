@@ -3,7 +3,7 @@ experiment:
   name: "phase4_baseline_benchmarks"
   dataset: "MNIST"
   rounds: 50
-  batch_size: 64
+  batch_size: 32
   local_epochs: 1
   lr: 0.01
   local_lr: 0.01
@@ -11,17 +11,18 @@ experiment:
   lr_min: 0.001
   fedprox_mu: 0.01
   N_clients: 20
-  M: 60
+  M: 30
   K_base: 50
-  K_ref: 12
-  eta: 0.10
-  server_momentum: 0.50
-  theta_self: 0.00
-  theta_self_mature: 0.35
+  K_ref: 10
+  eta: 0.01
+  server_momentum: 0.0
+  theta_self: 0.60
+  theta_self_mature: 0.60
   theta_floor: 0.40
-  theta_anchor_min: -0.20
-  theta_anchor_mature: 0.40
-  adaptive_clip_enabled: false
+  theta_anchor_min: 0.50
+  theta_anchor_mature: 0.50
+  adaptive_clip_enabled: true
+  gamma_clip: 1.5
   static_clip_C: 10.0
   spatial_warmup_rounds: 20
   norm_anomaly_threshold: 2.5
