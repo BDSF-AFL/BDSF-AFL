@@ -623,6 +623,74 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(len(sv_reloaded._buffer), 1)
         self.assertTrue(torch.allclose(sv_reloaded._buffer[0].delta_W, entry_sv.delta_W))
 
+    def test_pairwise_residual_coherence_defense(self):
+        """Verify Pairwise Residual Coherence (PRC) distinguishes honest correlated residuals from S2 random noise."""
+        from server.spatial_validator import SpatialValidator
+        
+        cfg = {
+            "K_ref": 3,
+            "M": 10,
+            "theta_cos": 0.10,
+            "theta_self": 0.30,
+            "theta_prc": 0.20,
+            "spatial_warmup_rounds": 3,
+            "N_clients": 6,
+            "prc_buffer_k": 5
+        }
+        sv = SpatialValidator(cfg)
+        
+        # Consensus is in dim 0 and 1
+        ref_base = torch.tensor([1.0, 1.0, 0.0, 0.0])
+        # Class A has residual in dim 2, Class B has residual in dim 3
+        c0 = ref_base + torch.tensor([0.0, 0.0, 0.5, 0.0])  # Client 0 (Class A)
+        c1 = ref_base + torch.tensor([0.0, 0.0, 0.0, 0.5])  # Client 1 (Class B)
+        c2 = ref_base + torch.tensor([0.0, 0.0, 0.4, 0.0])  # Client 2 (Class A)
+        c3 = ref_base + torch.tensor([0.0, 0.0, 0.0, 0.4])  # Client 3 (Class B)
+        
+        for cid, vec in [(0, c0), (1, c1), (2, c2), (3, c3), (0, c0), (1, c1)]:
+            entry = AcceptedEntry(delta_W=vec, I_score=1.0, P_score=1.0, client_id=cid, is_warmup=False)
+            sv.on_accept(entry)
+            sv.record_residual(cid, vec)
+        
+        # 1. Honest incoming client (client 4) belonging to Class A (matches clients 0 and 2)
+        honest_dW = ref_base + torch.tensor([0.0, 0.0, 0.45, 0.0])
+        ev_honest = sv.extract_evidence(honest_dW, client_id=4)
+        self.assertIsNotNone(ev_honest.prc_score)
+        self.assertGreaterEqual(ev_honest.prc_score, 0.50, "Honest residual should match its cluster with high PRC")
+        
+        # 2. S2 Mimicry adversary (client 5) with synthetic perturbation in an orthogonal dimension
+        cfg5 = dict(cfg)
+        sv5 = SpatialValidator(cfg5)
+        r5_base = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0])
+        for cid in [0, 1, 2, 3, 0, 1]:
+            v = r5_base + (torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0]) if cid % 2 == 0 else torch.tensor([0.0, 0.0, 0.0, 0.5, 0.0]))
+            e = AcceptedEntry(delta_W=v, I_score=1.0, P_score=1.0, client_id=cid, is_warmup=False)
+            sv5.on_accept(e)
+            sv5.record_residual(cid, v)
+        
+        # S2 adversary injects noise into unpopulated dimension 4
+        s2_dW = r5_base + torch.tensor([0.0, 0.0, 0.0, 0.0, 0.8])
+        ev_s2 = sv5.extract_evidence(s2_dW, client_id=5)
+        self.assertIsNotNone(ev_s2.prc_score)
+        self.assertLess(ev_s2.prc_score, 0.20, "S2 orthogonal noise should have low PRC below theta_prc")
+        
+        # 3. Decision Engine evaluation
+        engine = JointDecisionEngine(cfg)
+        temp_ev = TemporalEvidence(g_i=10.0, lower_fence=5.0, upper_fence=20.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
+        beh_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.95, history_depth=5, sim_anchor=0.90, behavioral_mature=True)
+        
+        # Honest passes P2
+        outcome_honest = engine.evaluate(4, temp_ev, ev_honest, beh_ev, 1.0, 1.0)
+        self.assertEqual(outcome_honest.action, "ACCEPT")
+        self.assertEqual(outcome_honest.primary_reason, "FULL_CONSENSUS_ACCEPT")
+        self.assertEqual(outcome_honest.aggregation_weight, 1.0)
+        
+        # S2 fails P2 gate (is_prc_valid=False) and is demoted to P3 DOWNWEIGHT
+        outcome_s2 = engine.evaluate(5, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
+        self.assertEqual(outcome_s2.action, "DOWNWEIGHT")
+        self.assertLess(outcome_s2.aggregation_weight, 0.50)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

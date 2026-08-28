@@ -360,7 +360,7 @@ class AggregatorServer:
 
         # --- Evidence Extraction (Observability Layer) ---
         temporal_evidence = self.temporal_filter.extract_evidence(g_i, cid, version_lag=version_lag)
-        spatial_evidence = self.spatial_validator.extract_evidence(submission.delta_W)
+        spatial_evidence = self.spatial_validator.extract_evidence(submission.delta_W, client_id=cid)
         client_gaps = self.temporal_filter.client_gap_history.get(cid, [])
         behavioral_evidence = self.behavioral_memory.extract_evidence(
             client_id=cid,
@@ -403,6 +403,7 @@ class AggregatorServer:
                 )
                 self.accepted_buffer.append(entry)
                 self.spatial_validator.on_accept(entry)
+                self.spatial_validator.record_residual(cid, delta_W_clipped)
                 self.temporal_filter.record_gap(g_i, cid)
 
                 # Warmup updates build the client's historical trajectory & genesis anchor
@@ -468,6 +469,7 @@ class AggregatorServer:
                     sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
+                    prc_score=spatial_evidence.prc_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 ret_val = {
@@ -496,6 +498,7 @@ class AggregatorServer:
                 )
                 self.accepted_buffer.append(entry)
                 self.spatial_validator.on_accept(entry)
+                self.spatial_validator.record_residual(cid, delta_W_clipped)
                 self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True)
                 self.temporal_filter.record_gap(g_i, cid)
 
@@ -534,6 +537,7 @@ class AggregatorServer:
                     sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
+                    prc_score=spatial_evidence.prc_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 ret_val = {
@@ -648,6 +652,7 @@ class AggregatorServer:
                     sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
                     anchor_drift=behavioral_evidence.anchor_drift,
                     consecutive_dw=behavioral_evidence.consecutive_dw,
+                    prc_score=spatial_evidence.prc_score,
                     quarantine_depth=self.quarantine_manager.depth,
                 )
                 self.consecutive_rejects += 1

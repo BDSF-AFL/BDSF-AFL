@@ -38,6 +38,14 @@ class JointDecisionEngine:
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
         self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 2.5))
+        # --- Pairwise Residual Coherence (PRC) thresholds ---
+        # theta_prc: minimum PRC score for full-weight P2 acceptance.
+        #   S2 mimicry has PRC ≈ 0-0.12; honest has PRC > 0.60-0.90 (shared class structure).
+        #   Updates failing this gate fall through to P3 (DOWNWEIGHT) instead of P2 (ACCEPT).
+        self.theta_prc: float = config.get("theta_prc", 0.20)
+        # theta_prc_hard: PRC below this triggers hard rejection in P5 + integrity slash.
+        #   A deeply negative PRC indicates the residual is anti-correlated with other clients.
+        self.theta_prc_hard: float = config.get("theta_prc_hard", -0.10)
 
     def evaluate(
         self,
@@ -186,8 +194,13 @@ class JointDecisionEngine:
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min)
         # Tolerate minor inter-batch GPU/thread timing jitter (g_margin <= 0.20) when spatial & self agreement are strong
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
+        # Pairwise Residual Coherence: S2 mimicry has PRC ≈ 0 (random orthogonal noise),
+        # honest clients have PRC > 0 (shared class structure in gradient residuals).
+        # None = not yet computed (warmup/insufficient buffer) → pass through.
+        prc = spatial_ev.prc_score
+        is_prc_valid = (prc is None or prc >= self.theta_prc)
 
-        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid:
+        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_prc_valid:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
@@ -201,6 +214,7 @@ class JointDecisionEngine:
                     "sim_frozen_anchor": sim_frozen,
                     "anchor_drift": drift_a,
                     "version_lag": v_lag,
+                    "prc_score": prc,
                 }
             )
 

@@ -40,6 +40,13 @@ class SpatialValidator:
         # Track the last computed cosine similarity for the borderline suspicion check
         self.last_sim: Optional[float] = None
 
+        # --- Pairwise Residual Coherence (PRC) ---
+        # Stores (client_id, residual_vector) tuples from recent accepted updates.
+        # The residual is the component of delta_W orthogonal to the consensus reference.
+        # Honest clients share structured residuals (same task); S2 mimicry has random residuals.
+        self.prc_buffer_k: int = config.get("prc_buffer_k", 10)
+        self._residual_buffer: deque[tuple[int, torch.Tensor]] = deque(maxlen=self.prc_buffer_k)
+
     # ------------------------------------------------------------------
     # Helper: Positive Norm Extraction
     # ------------------------------------------------------------------
@@ -56,10 +63,75 @@ class SpatialValidator:
         return pos_norms
 
     # ------------------------------------------------------------------
+    # Pairwise Residual Coherence (PRC)
+    # ------------------------------------------------------------------
+
+    def _compute_residual(self, dW_flat: torch.Tensor, ref_flat: torch.Tensor) -> Optional[torch.Tensor]:
+        """Computes the component of dW orthogonal to the reference direction.
+        
+        For honest clients training on overlapping classes, this residual captures
+        class-specific gradient structure that is correlated across clients.
+        For S2 mimicry, this residual is the random ε·v⊥ injected each round.
+        """
+        ref_norm_sq = torch.dot(ref_flat, ref_flat).item()
+        if ref_norm_sq < EPS:
+            return None
+        # Project dW onto ref direction, then subtract to get orthogonal residual
+        proj_coeff = torch.dot(dW_flat, ref_flat).item() / ref_norm_sq
+        residual = dW_flat - proj_coeff * ref_flat
+        res_norm = torch.norm(residual).item()
+        if res_norm < EPS or not np.isfinite(res_norm):
+            return None
+        return residual / res_norm  # unit-normalize for cosine comparison
+
+    def _compute_prc(self, dW_flat: torch.Tensor, ref_flat: torch.Tensor, 
+                     client_id: int) -> Optional[float]:
+        """Computes Pairwise Residual Coherence score for an incoming update.
+        
+        PRC = maximum cosine similarity between this update's orthogonal residual
+        and the residuals of recent accepted updates from OTHER clients (nearest neighbor
+        residual subspace alignment).
+        
+        Mathematical basis:
+        - Honest non-IID: residual captures class-specific gradient structure that matches
+          other clients sharing those classes → max cross-client residual similarity > 0.30.
+        - S2 Mimicry: residual = ε·v⊥ where v⊥ is random in 11M dimensions → PRC ≈ 0.
+        """
+        residual = self._compute_residual(dW_flat, ref_flat)
+        if residual is None:
+            return None
+        
+        # Compare against cross-client residuals (exclude same client)
+        cross_sims = []
+        for buf_cid, buf_residual in self._residual_buffer:
+            if buf_cid == client_id:
+                continue  # Only compare against OTHER clients
+            sim = torch.dot(residual, buf_residual).item()
+            if np.isfinite(sim):
+                cross_sims.append(sim)
+        
+        if len(cross_sims) < 3:  # Need minimum cross-client samples
+            return None
+        
+        return float(np.max(cross_sims))
+
+    def record_residual(self, client_id: int, delta_W: torch.Tensor) -> None:
+        """Records the orthogonal residual of an accepted update into the PRC buffer.
+        Called by AggregatorServer after an update is accepted/downweighted."""
+        ref, ref_count, _ = self._build_reference_stats()
+        if ref is None or ref_count < self.K_ref:
+            return
+        dW_flat = delta_W.flatten().float()
+        ref_flat = ref.flatten().float()
+        residual = self._compute_residual(dW_flat, ref_flat)
+        if residual is not None:
+            self._residual_buffer.append((client_id, residual))
+
+    # ------------------------------------------------------------------
     # Evidence Extraction
     # ------------------------------------------------------------------
 
-    def extract_evidence(self, delta_W: torch.Tensor) -> SpatialEvidence:
+    def extract_evidence(self, delta_W: torch.Tensor, client_id: int = -1) -> SpatialEvidence:
         """Extracts continuous spatial evidence without modifying state."""
         ref, ref_count, coherence = self._build_reference_stats()
         n_unique = len(self._unique_accepted_clients)
@@ -83,6 +155,12 @@ class SpatialValidator:
                 sim_global = None
             else:
                 sim_global = float(torch.dot(dW_flat, ref_flat).item() / (norm_raw * ref_norm))
+
+        # --- Pairwise Residual Coherence ---
+        prc_score = None
+        if spatial_mature and ref is not None and norm_raw > EPS and np.isfinite(norm_raw):
+            ref_flat = ref.flatten().float()
+            prc_score = self._compute_prc(dW_flat, ref_flat, client_id)
 
         # Static vs Adaptive warmup vs Adaptive mature
         if not self.use_adaptive_clip:
@@ -117,6 +195,7 @@ class SpatialValidator:
             spatial_mature=spatial_mature,
             spatial_reference_count=ref_count,
             spatial_coherence=coherence,
+            prc_score=prc_score,
         )
 
     # ------------------------------------------------------------------
@@ -265,8 +344,12 @@ class SpatialValidator:
                 "client_id": e.client_id,
                 "is_warmup": e.is_warmup,
             })
+        res_state = []
+        for cid, res in self._residual_buffer:
+            res_state.append((cid, res.clone().cpu()))
         return {
             "buffer": buffer_state,
+            "residual_buffer": res_state,
             "_unique_accepted_clients": list(self._unique_accepted_clients),
             "_total_accepted_count": self._total_accepted_count,
             "last_sim": self.last_sim,
@@ -285,6 +368,9 @@ class SpatialValidator:
                 is_warmup=bool(s.get("is_warmup", False)),
             )
             self._buffer.append(entry)
+        self._residual_buffer = deque(maxlen=self.prc_buffer_k)
+        for cid, res in state.get("residual_buffer", []):
+            self._residual_buffer.append((cid, res.clone().cpu()))
         clients = state.get("_unique_accepted_clients", state.get("unique_accepted_clients", []))
         self._unique_accepted_clients = set(clients)
         self._total_accepted_count = int(state.get("_total_accepted_count", state.get("total_accepted_count", 0)))

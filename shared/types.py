@@ -66,6 +66,7 @@ class SpatialEvidence:
     spatial_mature: Optional[bool] = None          # True when >= K_ref valid vectors exist
     spatial_reference_count: int = 0               # Count of positive contributors in buffer
     spatial_coherence: float = 0.0                 # Consensus coherence: ||(1/K)*sum(g_hat)||_2 in [0, 1]
+    prc_score: Optional[float] = None              # Pairwise Residual Coherence: mean cosine of orthogonal residuals vs recent buffer
 
     def __post_init__(self):
         if self.spatial_mature is None:
