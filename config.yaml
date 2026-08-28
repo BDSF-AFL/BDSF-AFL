@@ -43,8 +43,8 @@ fixed_K: false           # ablation: true = disable adaptive K_t
 K_ref: 10
 M: 30
 theta_cos: 0.1
-theta_self: 0.60        # strict identity threshold (honest >= 0.70 vs byz <= 0.30)
-theta_self_mature: 0.60 # robust identity threshold for mature clients
+theta_self: 0.30        # calibrated identity threshold for ResNet-18 non-IID manifolds
+theta_self_mature: 0.30 # calibrated identity threshold for mature clients
 theta_floor: 0.40       # calibrated directional floor for ResNet-18 Non-IID Dirichlet skew
 theta_anchor_min: 0.50  # minimum cosine similarity to Genesis Anchor
 theta_anchor_mature: 0.50 # robust genesis anchor alignment for mature clients
@@ -60,6 +60,7 @@ alpha_I: 0.30
 alpha_P: 0.20
 beta_I: 0.05
 beta_P: 0.08
+min_integrity_floor: 0.10 # bounded trust floor preventing permanent node death
 # Constraint enforced in code: beta_I < beta_P, alpha_I >= alpha_P
 spatial_grace_k: 2
 temporal_grace_k: 3    # straggler rejections allowed before P_i is slashed

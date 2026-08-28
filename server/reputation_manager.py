@@ -46,22 +46,23 @@ class ReputationManager:
         # Initialize streaks
         self.spatial_reject_streak: dict[int, int] = {cid: 0 for cid in client_ids}
         self.borderline_streak: dict[int, int] = {cid: 0 for cid in client_ids}
+        self.min_integrity_floor: float = float(config.get("min_integrity_floor", 0.10))
 
     # ------------------------------------------------------------------
     # Slash methods
     # ------------------------------------------------------------------
 
     def slash_integrity(self, cid: int) -> None:
-        """Multiplicative integrity slash.
+        """Multiplicative integrity slash with bounded recovery floor.
         Called on: spatial cosine failure, HIGH_FREQ temporal rejection."""
         self.scores[cid]["I"] *= (1.0 - self.alpha_I)
-        self.scores[cid]["I"] = max(0.0, self.scores[cid]["I"])
+        self.scores[cid]["I"] = max(self.min_integrity_floor, self.scores[cid]["I"])
 
     def reduce_pace(self, cid: int) -> None:
-        """Multiplicative pace slash. Called on: STRAGGLER temporal rejection.
-        Does NOT touch I_i."""
+        """Multiplicative pace slash with bounded recovery floor.
+        Called on: STRAGGLER temporal rejection. Does NOT touch I_i."""
         self.scores[cid]["P"] *= (1.0 - self.alpha_P)
-        self.scores[cid]["P"] = max(0.0, self.scores[cid]["P"])
+        self.scores[cid]["P"] = max(self.min_integrity_floor, self.scores[cid]["P"])
 
     def record_spatial_rejection(self, cid: int) -> None:
         """Increments spatial reject streak. Applies integrity slash only if the streak

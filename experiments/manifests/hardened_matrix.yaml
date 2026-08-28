@@ -17,8 +17,8 @@ experiment:
   K_ref: 10
   eta: 0.01
   server_momentum: 0.0
-  theta_self: 0.60
-  theta_self_mature: 0.60
+  theta_self: 0.30
+  theta_self_mature: 0.30
   theta_floor: 0.40
   theta_anchor_min: 0.50
   theta_anchor_mature: 0.50
@@ -32,6 +32,7 @@ experiment:
   quarantine_capacity: 20
   delta_borderline: 0.05
   K_drift_max: 10
+  min_integrity_floor: 0.10
 
   algorithms:
     - "Proposed_BDSF_AFL"

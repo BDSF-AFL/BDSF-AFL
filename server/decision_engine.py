@@ -24,11 +24,11 @@ class JointDecisionEngine:
     def __init__(self, config: dict):
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
-        self.theta_self: float = config.get("theta_self", 0.60)
-        self.theta_floor: float = config.get("theta_floor", 0.15)
+        self.theta_self: float = config.get("theta_self", 0.30)
+        self.theta_floor: float = config.get("theta_floor", 0.40)
         self.theta_anchor_min: float = config.get("theta_anchor_min", 0.50)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
-        self.K_drift_max: int = config.get("K_drift_max", 5)
+        self.K_drift_max: int = config.get("K_drift_max", 10)
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
         self.delta_theta_max: float = config.get("delta_theta_max", 0.25)
         self.delta_temp_mod: float = config.get("delta_temp_mod", 0.50)
