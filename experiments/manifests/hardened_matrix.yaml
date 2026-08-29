@@ -22,7 +22,7 @@ experiment:
   theta_floor: 0.40
   theta_anchor_min: 0.25
   theta_anchor_mature: 0.25
-  theta_cos: 0.25
+  theta_cos: 0.15
   adaptive_clip_enabled: true
   gamma_clip: 1.10
   theta_prc: 0.20

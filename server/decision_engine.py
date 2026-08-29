@@ -98,17 +98,23 @@ class JointDecisionEngine:
         prc = spatial_ev.prc_score
 
         # Multi-Round Suspicion Accumulator
-        if trs is not None and gdv is not None:
-            if trs >= 0.72 and gdv <= 0.12:
-                # Trajectory stiffening / rigid steering
-                self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
-            elif trs <= 0.65 and gdv >= 0.12:
-                # Fluid honest navigation
-                self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
+        # Suspicion accumulates ONLY when a client is out of consensus or exhibiting anomalous residuals
+        is_consensus_aligned = (
+            (sim_g is not None and sim_g >= self.theta_cos) and
+            (prc is None or prc >= self.theta_prc) and
+            (tra is None or tra >= self.theta_tra)
+        )
+        if is_consensus_aligned:
+            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
+        elif trs is not None and gdv is not None and trs >= self.trs_warn_thresh and gdv <= 0.10:
+            # Out-of-consensus persistent rigid steering
+            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
         elif tra is not None and tra < self.theta_tra:
             self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
-        elif (sim_g is not None and sim_g >= self.theta_cos) and (prc is None or prc >= self.theta_prc):
-            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
+        elif prc is not None and prc < self.theta_prc:
+            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
+        else:
+            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.02)
         S_i = self.suspicion_scores.get(cid, 0.0)
         spatial_ev.suspicion_score = S_i
 
@@ -270,7 +276,7 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 3: Trajectory Rigidity Rejection (Primary Mimicry/Compound Defense)
         # ---------------------------------------------------------------------
-        # Triggers when update is out of consensus (or suspicious) AND exhibits rigid directional steering
+        # Triggers when update is out of consensus or anomalous AND exhibits rigid directional steering
         if trs is not None and trs >= self.trs_reject_thresh and depth >= self.trs_min_depth:
             return JointDecisionOutcome(
                 action="REJECT",
@@ -302,7 +308,7 @@ class JointDecisionEngine:
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
-        is_trs_tolerable = (trs is None or trs <= self.trs_warn_thresh)
+        is_trs_tolerable = (trs is None or trs <= self.trs_warn_thresh or is_minority_consistent)
 
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and

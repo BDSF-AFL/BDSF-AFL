@@ -42,7 +42,7 @@ fixed_K: false           # ablation: true = disable adaptive K_t
 # Spatial validator (Pillar 3)
 K_ref: 10
 M: 30
-theta_cos: 0.25             # calibrated Priority 2 consensus threshold for ResNet-18
+theta_cos: 0.15             # calibrated Priority 2 consensus threshold for ResNet-18
 theta_self: 0.30        # calibrated identity threshold for ResNet-18 non-IID manifolds
 theta_self_mature: 0.30 # calibrated identity threshold for mature clients
 theta_floor: 0.40       # calibrated directional floor for ResNet-18 Non-IID Dirichlet skew
