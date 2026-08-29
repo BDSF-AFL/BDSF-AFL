@@ -235,46 +235,23 @@ class JointDecisionEngine:
                 )
 
         # ---------------------------------------------------------------------
-        # PRIORITY 2: Trajectory Rigidity Rejection (Primary Mimicry/Compound Defense)
-        # ---------------------------------------------------------------------
-        if trs is not None and trs >= self.trs_reject_thresh and depth >= self.trs_min_depth:
-            return JointDecisionOutcome(
-                action="REJECT",
-                primary_reason="TRAJECTORY_RIGIDITY_REJECT",
-                aggregation_weight=0.0,
-                force_sync_required=False,
-                diagnostic_features={
-                    "priority": 2,
-                    "trs_score": trs,
-                    "gdv_score": gdv,
-                    "dbp_score": dbp,
-                    "depth": depth,
-                    "suspicion_score": S_i,
-                    "sim_g": sim_g,
-                    "version_lag": v_lag,
-                    "sim_frozen_anchor": sim_frozen,
-                    "anchor_drift": drift_a,
-                }
-            )
-
-        # ---------------------------------------------------------------------
-        # PRIORITY 3: Strong Multi-Domain Agreement (Full Consensus Acceptance)
+        # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
         is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
         is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or is_spatial_valid)
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
-        is_trs_safe = (trs is None or trs <= self.trs_safe_thresh)
         is_suspicion_clean = (S_i < 0.30)
+        is_prc_valid = (prc is None or prc >= self.theta_prc)
 
-        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_trs_safe and is_suspicion_clean:
+        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_suspicion_clean and is_prc_valid:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
                 aggregation_weight=1.0 * (I_i * P_i),
                 force_sync_required=False,
                 diagnostic_features={
-                    "priority": 3,
+                    "priority": 2,
                     "sim_g": sim_g,
                     "sim_s": sim_s,
                     "sim_anchor": behavioral_ev.sim_anchor,
@@ -287,6 +264,30 @@ class JointDecisionEngine:
                     "prc_score": prc,
                     "tra_score": tra,
                     "suspicion_score": S_i,
+                }
+            )
+
+        # ---------------------------------------------------------------------
+        # PRIORITY 3: Trajectory Rigidity Rejection (Primary Mimicry/Compound Defense)
+        # ---------------------------------------------------------------------
+        # Triggers when update is out of consensus (or suspicious) AND exhibits rigid directional steering
+        if trs is not None and trs >= self.trs_reject_thresh and depth >= self.trs_min_depth:
+            return JointDecisionOutcome(
+                action="REJECT",
+                primary_reason="TRAJECTORY_RIGIDITY_REJECT",
+                aggregation_weight=0.0,
+                force_sync_required=False,
+                diagnostic_features={
+                    "priority": 3,
+                    "trs_score": trs,
+                    "gdv_score": gdv,
+                    "dbp_score": dbp,
+                    "depth": depth,
+                    "suspicion_score": S_i,
+                    "sim_g": sim_g,
+                    "version_lag": v_lag,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
                 }
             )
 

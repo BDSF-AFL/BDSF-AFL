@@ -158,7 +158,7 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(out2.primary_reason, "FULL_CONSENSUS_ACCEPT")
         self.assertEqual(out2.aggregation_weight, 1.0)
 
-        # Priority 2 Defense: S2 Mimicry Attack (Rigid Steering TRS >= 0.85)
+        # Priority 3 Defense: S2 Mimicry Attack (Out of consensus + Rigid Steering TRS >= 0.85)
         behav_ev_mimic = BehavioralEvidence(
             sim_self_mean=0.90,
             sim_self_max=0.95,
@@ -169,7 +169,7 @@ class TestBDSFSystem(unittest.TestCase):
             trs_score=0.89,
         )
         spat_ev_mimic = SpatialEvidence(
-            sim_global=0.85,
+            sim_global=0.05,  # out of consensus (0.05 < 0.10)
             norm_raw=1.0,
             norm_clipped=1.0,
             norm_ratio_median=1.0,
@@ -821,10 +821,10 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertLess(ev_byz.gdv_score, 0.06, "S2 adversary must have rigid GDV < 0.06")
         self.assertGreater(ev_byz.trs_score, 0.85, "S2 adversary must have high TRS > 0.85")
 
-        # 3. Decision engine rejection on TRS >= 0.85
+        # 3. Decision engine rejection on out-of-consensus TRS >= 0.85
         engine = JointDecisionEngine({"trs_reject_thresh": 0.85, "trs_min_depth": 5, "warmup_rounds": 0})
         temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
-        spat_ev = SpatialEvidence(sim_global=0.80, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
+        spat_ev = SpatialEvidence(sim_global=0.05, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
 
         out_byz = engine.evaluate(0, temp_ev, spat_ev, ev_byz, 1.0, 1.0)
         self.assertEqual(out_byz.action, "REJECT")
