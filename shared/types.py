@@ -92,6 +92,9 @@ class BehavioralEvidence:
     sim_frozen_anchor: Optional[float] = None  # Cosine similarity against immutable frozen Genesis Anchor
     anchor_drift: Optional[float] = None  # Angular/cosine divergence between adaptive and frozen anchors
     consecutive_dw: int = 0               # Active consecutive downweight streak
+    gdv_score: Optional[float] = None     # Gradient Direction Variance (std of consecutive cos sims)
+    dbp_score: Optional[float] = None     # Directional Bias Persistence (mean all-pairs cos in history)
+    trs_score: Optional[float] = None     # Trajectory Rigidity Score = DBP * (1 - GDV)
     behavioral_mature: Optional[bool] = None  # True when history_depth >= behavioral_min_depth (depth >= 3)
 
     def __post_init__(self):

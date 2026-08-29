@@ -138,6 +138,7 @@ class AggregatorServer:
         self.virtual_time = max(self.virtual_time, t_now)
         
         g_i = t_now - reg.last_update_time
+        self.rep_manager.set_round(self.round_number)
         I_i, P_i = self.rep_manager.get(cid)
         pulled_version = getattr(submission, "model_version_at_pull", 0)
         version_lag = max(0, self.model_version - pulled_version)
@@ -372,8 +373,9 @@ class AggregatorServer:
         # --------------------------------------------------------------
         # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
         # --------------------------------------------------------------
+        # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
+        # --------------------------------------------------------------
         if self.decision_mode == "joint":
-            eff_round = self.round_number // max(1, self.config.get("N_clients", 20))
             outcome = self.decision_engine.evaluate(
                 cid=cid,
                 temporal_ev=temporal_evidence,
@@ -381,7 +383,7 @@ class AggregatorServer:
                 behavioral_ev=behavioral_evidence,
                 I_i=I_i,
                 P_i=P_i,
-                current_round=eff_round,
+                current_round=self.round_number,
             )
 
             delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
@@ -444,53 +446,38 @@ class AggregatorServer:
                             round=self.round_number, client_id=q_entry.client_id,
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
                             version_lag=version_lag,
-                            weight=q_w, action="ACCEPT",
-                            quarantine_depth=self.quarantine_manager.depth,
+                            weight=q_w,
                         )
                     elif q_act == "REJECT":
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
                             version_lag=version_lag,
-                            weight=None, action="REJECT",
-                            quarantine_depth=self.quarantine_manager.depth,
+                            weight=None,
                         )
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
-                    status="ACCEPT", reason=outcome.primary_reason,
+                    status="ACCEPT", reason=outcome.primary_reason, weight=weight,
+                    I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
                     fence_margin=temporal_evidence.fence_margin,
-                    client_z_score=temporal_evidence.client_z_score,
-                    is_burn_in=temporal_evidence.is_burn_in,
-                    spatial_mature=spatial_evidence.spatial_mature,
                     temporal_mature=temporal_evidence.temporal_mature,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    spatial_ref_count=spatial_evidence.spatial_reference_count,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
                     sim_global=spatial_evidence.sim_global,
                     norm_raw=spatial_evidence.norm_raw,
-                    norm_clipped=spatial_evidence.norm_clipped,
                     norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
-                    reference_available=spatial_evidence.reference_available,
-                    weight=weight, action="ACCEPT",
-                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    spatial_mature=spatial_evidence.spatial_mature,
                     sim_self_max=behavioral_evidence.sim_self_max,
-                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
-                    cadence_consistency=behavioral_evidence.cadence_consistency,
-                    history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
-                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
-                    anchor_drift=behavioral_evidence.anchor_drift,
-                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
                     prc_score=spatial_evidence.prc_score,
                     tra_score=spatial_evidence.tra_score,
                     suspicion_score=spatial_evidence.suspicion_score,
-                    oer_score=spatial_evidence.oer_score,
-                    quarantine_depth=self.quarantine_manager.depth,
+                    gdv_score=behavioral_evidence.gdv_score,
+                    dbp_score=behavioral_evidence.dbp_score,
+                    trs_score=behavioral_evidence.trs_score,
                 )
                 ret_val = {
                     "status": "ACCEPT",
@@ -529,39 +516,26 @@ class AggregatorServer:
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
-                    status="DOWNWEIGHT", reason=outcome.primary_reason,
+                    status="DOWNWEIGHT", reason=outcome.primary_reason, weight=weight,
+                    I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
                     fence_margin=temporal_evidence.fence_margin,
-                    client_z_score=temporal_evidence.client_z_score,
-                    is_burn_in=temporal_evidence.is_burn_in,
-                    spatial_mature=spatial_evidence.spatial_mature,
                     temporal_mature=temporal_evidence.temporal_mature,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    spatial_ref_count=spatial_evidence.spatial_reference_count,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
                     sim_global=spatial_evidence.sim_global,
                     norm_raw=spatial_evidence.norm_raw,
-                    norm_clipped=spatial_evidence.norm_clipped,
                     norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
-                    reference_available=spatial_evidence.reference_available,
-                    weight=weight, action="DOWNWEIGHT",
-                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    spatial_mature=spatial_evidence.spatial_mature,
                     sim_self_max=behavioral_evidence.sim_self_max,
-                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
-                    cadence_consistency=behavioral_evidence.cadence_consistency,
-                    history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
-                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
-                    anchor_drift=behavioral_evidence.anchor_drift,
-                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
                     prc_score=spatial_evidence.prc_score,
                     tra_score=spatial_evidence.tra_score,
                     suspicion_score=spatial_evidence.suspicion_score,
-                    oer_score=spatial_evidence.oer_score,
-                    quarantine_depth=self.quarantine_manager.depth,
+                    gdv_score=behavioral_evidence.gdv_score,
+                    dbp_score=behavioral_evidence.dbp_score,
+                    trs_score=behavioral_evidence.trs_score,
                 )
                 ret_val = {
                     "status": "DOWNWEIGHT",
@@ -590,39 +564,26 @@ class AggregatorServer:
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
-                    status="QUARANTINE", reason=outcome.primary_reason,
+                    status="QUARANTINE", reason=outcome.primary_reason, weight=0.0,
+                    I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
                     fence_margin=temporal_evidence.fence_margin,
-                    client_z_score=temporal_evidence.client_z_score,
-                    is_burn_in=temporal_evidence.is_burn_in,
-                    spatial_mature=spatial_evidence.spatial_mature,
                     temporal_mature=temporal_evidence.temporal_mature,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    spatial_ref_count=spatial_evidence.spatial_reference_count,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
                     sim_global=spatial_evidence.sim_global,
                     norm_raw=spatial_evidence.norm_raw,
-                    norm_clipped=spatial_evidence.norm_clipped,
                     norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
-                    reference_available=spatial_evidence.reference_available,
-                    weight=0.0, action="QUARANTINE",
-                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    spatial_mature=spatial_evidence.spatial_mature,
                     sim_self_max=behavioral_evidence.sim_self_max,
-                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
-                    cadence_consistency=behavioral_evidence.cadence_consistency,
-                    history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
-                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
-                    anchor_drift=behavioral_evidence.anchor_drift,
-                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
                     prc_score=spatial_evidence.prc_score,
                     tra_score=spatial_evidence.tra_score,
                     suspicion_score=spatial_evidence.suspicion_score,
-                    oer_score=spatial_evidence.oer_score,
-                    quarantine_depth=self.quarantine_manager.depth,
+                    gdv_score=behavioral_evidence.gdv_score,
+                    dbp_score=behavioral_evidence.dbp_score,
+                    trs_score=behavioral_evidence.trs_score,
                 )
                 return {
                     "status": "QUARANTINE",
@@ -644,8 +605,7 @@ class AggregatorServer:
                     reg.last_update_time = fs_payload.timestamp
                 elif outcome.primary_reason == "HARD_GUARD_TEMPORAL_SPAM":
                     self.rep_manager.reduce_pace(cid)
-                elif outcome.primary_reason == "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT":
-                    # Damped soft slash for persistent temporal residual incoherence
+                elif outcome.primary_reason in ("TEMPORAL_RESIDUAL_INCOHERENCE_REJECT", "PROGRESSIVE_SUSPICION_TRAJECTORY_REJECT", "TRAJECTORY_RIGIDITY_REJECT"):
                     self.rep_manager.record_spatial_rejection(cid)
                     reg.last_update_time = t_now
                 else:
@@ -655,39 +615,26 @@ class AggregatorServer:
                 I_i, P_i = self.rep_manager.get(cid)
                 self._log_update(
                     round=self.round_number, client_id=cid,
-                    g_i=g_i, version_lag=version_lag, I_i=I_i, P_i=P_i,
-                    status="REJECT", reason=outcome.primary_reason,
+                    status="REJECT", reason=outcome.primary_reason, weight=None,
+                    I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
                     lower_fence=temporal_evidence.lower_fence,
                     upper_fence=temporal_evidence.upper_fence,
                     fence_margin=temporal_evidence.fence_margin,
-                    client_z_score=temporal_evidence.client_z_score,
-                    is_burn_in=temporal_evidence.is_burn_in,
-                    spatial_mature=spatial_evidence.spatial_mature,
                     temporal_mature=temporal_evidence.temporal_mature,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    spatial_ref_count=spatial_evidence.spatial_reference_count,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
                     sim_global=spatial_evidence.sim_global,
                     norm_raw=spatial_evidence.norm_raw,
-                    norm_clipped=spatial_evidence.norm_clipped,
                     norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    dynamic_bound_C=spatial_evidence.dynamic_bound_C,
-                    reference_available=spatial_evidence.reference_available,
-                    weight=None, action="REJECT",
-                    sim_self_mean=behavioral_evidence.sim_self_mean,
+                    spatial_coherence=spatial_evidence.spatial_coherence,
+                    spatial_mature=spatial_evidence.spatial_mature,
                     sim_self_max=behavioral_evidence.sim_self_max,
-                    norm_deviation_self=behavioral_evidence.norm_deviation_self,
-                    cadence_consistency=behavioral_evidence.cadence_consistency,
-                    history_depth=behavioral_evidence.history_depth,
                     sim_anchor=behavioral_evidence.sim_anchor,
-                    sim_frozen_anchor=behavioral_evidence.sim_frozen_anchor,
-                    anchor_drift=behavioral_evidence.anchor_drift,
-                    consecutive_dw=behavioral_evidence.consecutive_dw,
+                    behavioral_mature=behavioral_evidence.behavioral_mature,
                     prc_score=spatial_evidence.prc_score,
                     tra_score=spatial_evidence.tra_score,
                     suspicion_score=spatial_evidence.suspicion_score,
-                    oer_score=spatial_evidence.oer_score,
-                    quarantine_depth=self.quarantine_manager.depth,
+                    gdv_score=behavioral_evidence.gdv_score,
+                    dbp_score=behavioral_evidence.dbp_score,
+                    trs_score=behavioral_evidence.trs_score,
                 )
                 self.consecutive_rejects += 1
                 if self.consecutive_rejects >= self.deadlock_threshold:

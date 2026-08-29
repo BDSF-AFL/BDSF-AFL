@@ -160,20 +160,19 @@ class SpatialValidator:
         dW_flat = delta_W.flatten().float()
         norm_raw = torch.norm(dW_flat).item()
 
-        if not spatial_mature or norm_raw <= EPS or not np.isfinite(norm_raw):
-            sim_global = None
-        else:
+        ref_available = (ref is not None and ref_count >= self.K_ref and norm_raw > EPS and np.isfinite(norm_raw))
+
+        sim_global = None
+        if ref_available:
             ref_flat = ref.flatten().float()
             ref_norm = torch.norm(ref_flat).item()
-            if ref_norm <= EPS or not np.isfinite(ref_norm):
-                sim_global = None
-            else:
+            if ref_norm > EPS and np.isfinite(ref_norm):
                 sim_global = float(torch.dot(dW_flat, ref_flat).item() / (norm_raw * ref_norm))
 
         # --- Pairwise Residual Coherence & Temporal Residual Autocorrelation ---
         prc_score = None
         tra_score = None
-        if spatial_mature and ref is not None and norm_raw > EPS and np.isfinite(norm_raw):
+        if ref_available:
             ref_flat = ref.flatten().float()
             prc_score = self._compute_prc(dW_flat, ref_flat, client_id)
             residual = self._compute_residual(dW_flat, ref_flat)

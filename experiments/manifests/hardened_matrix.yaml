@@ -29,13 +29,23 @@ experiment:
   theta_prc_hard: -0.10
   prc_buffer_k: 10
   theta_tra: 0.45
-  suspicion_decay: 0.60
-  suspicion_step: 0.20
+  suspicion_decay: 0.50
+  suspicion_step: 0.15
   suspicion_reject_thresh: 0.65
   static_clip_C: 10.0
-  spatial_warmup_rounds: 100
-  temporal_min_samples: 100
-  norm_anomaly_threshold: 1.30
+  warmup_rounds: 300
+  spatial_warmup_rounds: 300
+  temporal_min_samples: 300
+  norm_anomaly_threshold: 1.60
+  trs_reject_thresh: 0.85
+  trs_warn_thresh: 0.80
+  trs_safe_thresh: 0.70
+  trs_min_depth: 5
+  alpha_I: 0.20
+  alpha_P: 0.15
+  beta_I: 0.08
+  beta_P: 0.10
+  spatial_grace_k: 3
   enable_quarantine: true
   quarantine_horizon: 5
   quarantine_capacity: 20

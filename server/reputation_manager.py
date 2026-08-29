@@ -12,12 +12,12 @@ class ReputationManager:
 
     def __init__(self, client_ids: list[int], config: dict) -> None:
         # Slash rates (multiplicative)
-        self.alpha_I: float = config.get("alpha_I", 0.30)  # integrity slash (moderated)
-        self.alpha_P: float = config.get("alpha_P", 0.20)  # pace slash
+        self.alpha_I: float = config.get("alpha_I", 0.20)  # integrity slash (moderated)
+        self.alpha_P: float = config.get("alpha_P", 0.15)  # pace slash
 
         # Recovery rates (additive)
-        self.beta_I: float = config.get("beta_I", 0.05)    # integrity recovery (accelerated)
-        self.beta_P: float = config.get("beta_P", 0.08)    # pace recovery (fast)
+        self.beta_I: float = config.get("beta_I", 0.08)    # integrity recovery (accelerated)
+        self.beta_P: float = config.get("beta_P", 0.10)    # pace recovery (fast)
 
         # Core invariants — asymmetry constraint
         assert self.beta_I < self.beta_P, (
@@ -36,17 +36,25 @@ class ReputationManager:
         self._history: dict[int, list[tuple]] = {cid: [] for cid in client_ids}
         self._round: int = 0
 
-        # Spatial Grace Counter parameters (default: 2)
-        self.spatial_grace_k: int = config.get("spatial_grace_k", 2)
+        # Spatial Grace Counter parameters (default: 3)
+        self.spatial_grace_k: int = config.get("spatial_grace_k", 3)
         # Borderline Suspicion Counter parameters (default: margin=0.10, limit=5)
         self.borderline_margin: float = config.get("borderline_margin", 0.10)
         self.borderline_limit: int = config.get("borderline_limit", 5)
         self.theta_cos: float = config.get("theta_cos", 0.1)
 
+        # Warmup Slashing Grace Horizon
+        self.slashing_warmup_rounds: int = int(config.get("spatial_warmup_rounds", config.get("warmup_rounds", 300)))
+        self._current_round: int = 0
+
         # Initialize streaks
         self.spatial_reject_streak: dict[int, int] = {cid: 0 for cid in client_ids}
         self.borderline_streak: dict[int, int] = {cid: 0 for cid in client_ids}
         self.min_integrity_floor: float = float(config.get("min_integrity_floor", 0.10))
+
+    def set_round(self, round_number: int) -> None:
+        """Updates current round tracker for slashing grace horizon."""
+        self._current_round = round_number
 
     # ------------------------------------------------------------------
     # Slash methods
@@ -54,19 +62,25 @@ class ReputationManager:
 
     def slash_integrity(self, cid: int) -> None:
         """Multiplicative integrity slash with bounded recovery floor.
-        Called on: spatial cosine failure, HIGH_FREQ temporal rejection."""
-        self.scores[cid]["I"] *= (1.0 - self.alpha_I)
-        self.scores[cid]["I"] = max(self.min_integrity_floor, self.scores[cid]["I"])
+        Called on: spatial cosine failure, HIGH_FREQ temporal rejection.
+        Gated by slashing_warmup_rounds.
+        """
+        if self._current_round >= self.slashing_warmup_rounds:
+            self.scores[cid]["I"] *= (1.0 - self.alpha_I)
+            self.scores[cid]["I"] = max(self.min_integrity_floor, self.scores[cid]["I"])
 
     def reduce_pace(self, cid: int) -> None:
         """Multiplicative pace slash with bounded recovery floor.
-        Called on: STRAGGLER temporal rejection. Does NOT touch I_i."""
-        self.scores[cid]["P"] *= (1.0 - self.alpha_P)
-        self.scores[cid]["P"] = max(self.min_integrity_floor, self.scores[cid]["P"])
+        Called on: STRAGGLER temporal rejection. Does NOT touch I_i.
+        Gated by slashing_warmup_rounds.
+        """
+        if self._current_round >= self.slashing_warmup_rounds:
+            self.scores[cid]["P"] *= (1.0 - self.alpha_P)
+            self.scores[cid]["P"] = max(self.min_integrity_floor, self.scores[cid]["P"])
 
     def record_spatial_rejection(self, cid: int) -> None:
         """Increments spatial reject streak. Applies integrity slash only if the streak
-        reaches or exceeds spatial_grace_k.
+        reaches or exceeds spatial_grace_k and post-warmup.
         """
         self.spatial_reject_streak[cid] += 1
         if self.spatial_reject_streak[cid] >= self.spatial_grace_k:

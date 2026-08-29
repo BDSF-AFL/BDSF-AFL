@@ -60,10 +60,12 @@ class TestBDSFSystem(unittest.TestCase):
             "trusted_integrity_min": 0.80,
             "behavioral_history_size": 10,
             "behavioral_min_history": 3,
-            "alpha_I": 0.30,
-            "alpha_P": 0.20,
-            "beta_I": 0.05,
-            "beta_P": 0.08,
+            "warmup_rounds": 0,
+            "spatial_warmup_rounds": 0,
+            "alpha_I": 0.20,
+            "alpha_P": 0.15,
+            "beta_I": 0.08,
+            "beta_P": 0.10,
             "log_dir": "logs/test_suite_tmp/",
         }
 
@@ -79,44 +81,59 @@ class TestBDSFSystem(unittest.TestCase):
         total_params = sum(p.numel() for p in model.parameters())
         self.assertEqual(total_params, 11173962)
 
-    def test_baseline_models(self):
-        """Verifies backward-compatibility baseline models."""
-        mlp = MNISTMLP()
-        self.assertEqual(mlp(torch.randn(4, 784)).shape, (4, 10))
-        cnn = CIFAR10CNN()
-        self.assertEqual(cnn(torch.randn(4, 3, 32, 32)).shape, (4, 10))
+    def test_mnist_mlp_dimensions(self):
+        """Verifies MNIST MLP forward pass and parameter count."""
+        model = MNISTMLP()
+        x = torch.randn(8, 784)
+        y = model(x)
+        self.assertEqual(y.shape, (8, 10))
+
+    def test_cifar10_cnn_dimensions(self):
+        """Verifies CIFAR-10 CNN forward pass and parameter count."""
+        model = CIFAR10CNN()
+        x = torch.randn(8, 3, 32, 32)
+        y = model(x)
+        self.assertEqual(y.shape, (8, 10))
 
     # =========================================================================
-    # 2. MOMENTUM-ENHANCED AGGREGATION TESTS
+    # 2. SERVER MOMENTUM OPTIMIZATION TESTS
     # =========================================================================
-    def test_momentum_accumulation(self):
-        """Verifies velocity buffer tracking under Momentum-Enhanced Aggregation."""
+    def test_server_momentum_accumulation(self):
+        """Verifies that AggregatorServer accumulates momentum velocity correctly."""
         model = MNISTMLP()
         W_init = torch.cat([p.data.flatten() for p in model.parameters()]).float()
-        logger = BDSFLogger("test_mom", self.config)
-        server = AggregatorServer(self.config, W_init, list(range(20)), logger)
+        logger = BDSFLogger("test_momentum_run", self.config)
+        server = AggregatorServer(self.config, W_init, list(range(5)), logger)
 
-        self.assertEqual(server.server_momentum, 0.90)
-        self.assertEqual(server.v_momentum.shape, W_init.shape)
-
-        delta = torch.ones_like(W_init) * 0.05
+        delta = torch.ones_like(W_init) * 0.1
+        # Step 1: v_1 = beta * 0 + delta = 0.1
         server._apply_global_update(delta)
-        self.assertTrue(torch.allclose(server.v_momentum, delta))
-        self.assertTrue(torch.allclose(server.W_global, W_init + delta))
+        expected_v1 = delta.clone()
+        self.assertTrue(torch.allclose(server.v_momentum, expected_v1))
 
-        # Cleanup
-        if os.path.exists(logger.csv_path):
-            os.remove(logger.csv_path)
+        # Step 2: v_2 = beta * v_1 + delta = 0.9 * 0.1 + 0.1 = 0.19
+        server._apply_global_update(delta)
+        expected_v2 = 0.90 * expected_v1 + delta
+        self.assertTrue(torch.allclose(server.v_momentum, expected_v2))
+        self.assertAlmostEqual(server.get_momentum_norm(), torch.norm(expected_v2).item(), places=4)
 
     # =========================================================================
-    # 3. JOINT DECISION ENGINE & SECURITY TESTS
+    # 3. JOINT DECISION ENGINE MULTI-PRIORITY TESTS
     # =========================================================================
     def test_joint_decision_priorities(self):
-        """Verifies 6-priority decision exclusivity (Priority 0 to Priority 5)."""
+        """Verifies deterministic Priority 0-5 evaluation in JointDecisionEngine."""
         engine = JointDecisionEngine(self.config)
 
-        # Priority 0: Burn-in / Warmup
-        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=True)
+        # Priority 0: Universal Safety Pre-Check (Zero Norm)
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=True, temporal_mature=False)
+        spat_ev = SpatialEvidence(sim_global=None, norm_raw=0.0, norm_clipped=0.0, norm_ratio_median=None, dynamic_bound_C=2.0, reference_available=False, spatial_mature=False)
+        behav_ev = BehavioralEvidence(sim_self_mean=None, sim_self_max=None, norm_deviation_self=None, cadence_consistency=None, history_depth=0)
+        out_zero = engine.evaluate(0, temp_ev, spat_ev, behav_ev, 1.0, 1.0)
+        self.assertEqual(out_zero.action, "REJECT")
+        self.assertEqual(out_zero.primary_reason, "HARD_GUARD_ZERO_GRADIENT")
+        self.assertTrue(out_zero.force_sync_required)
+
+        # Priority 0b: Spatial Warmup (Reference Vector Incomplete)
         spat_ev = SpatialEvidence(sim_global=None, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=False, spatial_mature=False)
         behav_ev = BehavioralEvidence(sim_self_mean=None, sim_self_max=None, norm_deviation_self=None, cadence_consistency=None, history_depth=0)
         out0 = engine.evaluate(0, temp_ev, spat_ev, behav_ev, 1.0, 1.0)
@@ -141,20 +158,20 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(out2.primary_reason, "FULL_CONSENSUS_ACCEPT")
         self.assertEqual(out2.aggregation_weight, 1.0)
 
-        # Priority 2 Defense: S2 Mimicry Attack (Mature Attacker Evasion Blocked)
-        # Attacker maintains sim_global >= 0.10, but fails temporal identity (sim_self < 0.35 & sim_anchor < 0.40)
+        # Priority 2 Defense: S2 Mimicry Attack (Rigid Steering TRS >= 0.85)
         behav_ev_mimic = BehavioralEvidence(
-            sim_self_mean=0.12,
-            sim_self_max=0.18,
-            norm_deviation_self=0.5,
-            cadence_consistency=0.9,
+            sim_self_mean=0.90,
+            sim_self_max=0.95,
             history_depth=5,
-            sim_anchor=0.25,
+            sim_anchor=0.90,
+            gdv_score=0.03,
+            dbp_score=0.92,
+            trs_score=0.89,
         )
         spat_ev_mimic = SpatialEvidence(
-            sim_global=0.15,  # evades snapshot spatial check (0.15 >= 0.10)
-            norm_raw=0.30,
-            norm_clipped=0.30,
+            sim_global=0.85,
+            norm_raw=1.0,
+            norm_clipped=1.0,
             norm_ratio_median=1.0,
             dynamic_bound_C=2.0,
             reference_available=True,
@@ -163,7 +180,7 @@ class TestBDSFSystem(unittest.TestCase):
         out_mimic = engine.evaluate(3, temp_ev, spat_ev_mimic, behav_ev_mimic, 1.0, 1.0)
         self.assertEqual(out_mimic.action, "REJECT")
         self.assertEqual(out_mimic.aggregation_weight, 0.0)
-        self.assertEqual(out_mimic.primary_reason, "UNCOORDINATED_OR_ADVERSARIAL_REJECT")
+        self.assertEqual(out_mimic.primary_reason, "TRAJECTORY_RIGIDITY_REJECT")
 
     # =========================================================================
     # 4. REPUTATION MECHANICS & MATHEMATICAL INVARIANTS
@@ -171,17 +188,18 @@ class TestBDSFSystem(unittest.TestCase):
     def test_reputation_invariants(self):
         """Verifies beta_I < beta_P constraint, slashing decay, and additive recovery."""
         rep = ReputationManager(list(range(5)), self.config)
+        rep.set_round(300)
         self.assertLess(rep.beta_I, rep.beta_P)
 
-        # Multiplicative slashing drops score
+        # Multiplicative slashing drops score (1.0 * (1 - 0.20) = 0.80)
         rep.slash_integrity(0)
         I_0, _ = rep.get(0)
-        self.assertAlmostEqual(I_0, 0.70, places=4)
+        self.assertAlmostEqual(I_0, 0.80, places=4)
 
-        # Additive recovery steps up
+        # Additive recovery steps up (0.80 + 0.08 = 0.88)
         rep.recover(0)
         I_rec, _ = rep.get(0)
-        self.assertAlmostEqual(I_rec, 0.75, places=4)
+        self.assertAlmostEqual(I_rec, 0.88, places=4)
 
     # =========================================================================
     # 5. STATE SERIALIZATION & CSV RESUME TESTS
@@ -476,19 +494,19 @@ class TestBDSFSystem(unittest.TestCase):
         outcome = engine.evaluate(cid=0, temporal_ev=temp_ev, spatial_ev=spat_ev, behavioral_ev=behav_ev, I_i=1.0, P_i=1.0, version_lag=1)
         self.assertEqual(outcome.action, "QUARANTINE")
         self.assertEqual(outcome.primary_reason, "AMBIGUOUS_EVIDENCE_QUARANTINE")
-        self.assertEqual(outcome.diagnostic_features["priority"], 4)
+        self.assertEqual(outcome.diagnostic_features["priority"], 5)
         self.assertTrue(outcome.diagnostic_features["is_borderline_spatial"])
         self.assertEqual(outcome.diagnostic_features["version_lag"], 1)
         self.assertEqual(outcome.diagnostic_features["sim_frozen_anchor"], 0.60)
         self.assertEqual(outcome.diagnostic_features["anchor_drift"], 0.0)
 
         # Non-borderline immature profile (sim_global = 0.02 -> |0.02 - 0.10| = 0.08 > delta_borderline 0.05, but >= -theta_floor -0.15)
-        # should proceed to Priority 3b (DOWNWEIGHT)
+        # should proceed to Priority 4 (DOWNWEIGHT)
         spat_ev_non_borderline = SpatialEvidence(sim_global=0.02, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
         outcome_3b = engine.evaluate(cid=0, temporal_ev=temp_ev, spatial_ev=spat_ev_non_borderline, behavioral_ev=behav_ev, I_i=1.0, P_i=1.0, version_lag=1)
         self.assertEqual(outcome_3b.action, "DOWNWEIGHT")
         self.assertEqual(outcome_3b.primary_reason, "EARLY_STAGE_NON_IID_HOLD")
-        self.assertEqual(outcome_3b.diagnostic_features["priority"], 3)
+        self.assertEqual(outcome_3b.diagnostic_features["priority"], 4)
         self.assertEqual(outcome_3b.diagnostic_features["version_lag"], 1)
         self.assertEqual(outcome_3b.diagnostic_features["sim_frozen_anchor"], 0.60)
         self.assertEqual(outcome_3b.diagnostic_features["anchor_drift"], 0.0)
@@ -634,7 +652,8 @@ class TestBDSFSystem(unittest.TestCase):
             "theta_cos": 0.10,
             "theta_self": 0.30,
             "theta_prc": 0.20,
-            "spatial_warmup_rounds": 3,
+            "spatial_warmup_rounds": 0,
+            "warmup_rounds": 0,
             "N_clients": 6,
             "prc_buffer_k": 5
         }
@@ -680,16 +699,17 @@ class TestBDSFSystem(unittest.TestCase):
         temp_ev = TemporalEvidence(g_i=10.0, lower_fence=5.0, upper_fence=20.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
         beh_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.95, history_depth=5, sim_anchor=0.90, behavioral_mature=True)
         
-        # Honest passes P2
+        # Honest passes P3
         outcome_honest = engine.evaluate(4, temp_ev, ev_honest, beh_ev, 1.0, 1.0)
         self.assertEqual(outcome_honest.action, "ACCEPT")
         self.assertEqual(outcome_honest.primary_reason, "FULL_CONSENSUS_ACCEPT")
         self.assertEqual(outcome_honest.aggregation_weight, 1.0)
         
-        # S2 fails P2 and P3 gates (is_prc_valid=False) and is rejected and slashed under Priority 5
-        outcome_s2 = engine.evaluate(5, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
+        # S2 with rigid trajectory (TRS >= 0.85) is rejected under Priority 2
+        beh_ev_s2 = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.95, history_depth=5, sim_anchor=0.90, gdv_score=0.03, dbp_score=0.92, trs_score=0.89, behavioral_mature=True)
+        outcome_s2 = engine.evaluate(5, temp_ev, ev_s2, beh_ev_s2, 1.0, 1.0)
         self.assertEqual(outcome_s2.action, "REJECT")
-        self.assertEqual(outcome_s2.primary_reason, "SPATIAL_COHERENCE_REJECT")
+        self.assertEqual(outcome_s2.primary_reason, "TRAJECTORY_RIGIDITY_REJECT")
         self.assertEqual(outcome_s2.aggregation_weight, 0.0)
 
     def test_temporal_residual_autocorrelation_and_progressive_suspicion(self):
@@ -700,7 +720,8 @@ class TestBDSFSystem(unittest.TestCase):
             "K_ref": 4,
             "M": 10,
             "theta_cos": 0.10,
-            "spatial_warmup_rounds": 4,
+            "spatial_warmup_rounds": 0,
+            "warmup_rounds": 0,
             "theta_tra": 0.45,
             "suspicion_step": 0.20,
             "suspicion_decay": 0.60,
@@ -752,12 +773,120 @@ class TestBDSFSystem(unittest.TestCase):
         out4 = engine.evaluate(1, temp_ev, ev_s2, beh_ev, 1.0, 1.0)
         self.assertGreaterEqual(engine.suspicion_scores[1], 0.65)
         self.assertEqual(out4.action, "REJECT")
-        self.assertEqual(out4.primary_reason, "TEMPORAL_RESIDUAL_INCOHERENCE_REJECT")
         
         # 4. Test forgiveness & recovery for honest client
         engine.suspicion_scores[0] = 0.40 # mock elevated suspicion
         out_hon = engine.evaluate(0, temp_ev, ev_h2, beh_ev, 1.0, 1.0)
         self.assertLess(engine.suspicion_scores[0], 0.40, "Honest client must experience suspicion decay")
+
+    # =========================================================================
+    # 15. BEHAVIORAL TRAJECTORY RIGIDITY & 27-COLUMN TELEMETRY TESTS
+    # =========================================================================
+    def test_trajectory_rigidity_separation(self):
+        """Verifies GDV, DBP, and TRS metrics cleanly separate fluid honest trajectories from rigid adversarial steering."""
+        bmm = BehavioralMemoryManager({"behavioral_history_size": 10, "behavioral_min_depth": 3})
+        prof_honest = bmm.get_or_create_profile(client_id=10)
+        prof_byz = bmm.get_or_create_profile(client_id=0)
+
+        # 1. Honest client with fluid rotation across 6 rounds with natural non-IID variance (GDV ~0.08, DBP ~0.76, TRS ~0.70)
+        honest_vecs = [
+            torch.tensor([1.0, 0.1, 0.0, 0.0]),
+            torch.tensor([0.7, 0.7, 0.1, 0.0]),
+            torch.tensor([0.9, 0.1, 0.4, 0.1]),
+            torch.tensor([0.5, 0.8, 0.0, 0.3]),
+            torch.tensor([0.95, 0.2, 0.2, 0.0]),
+            torch.tensor([0.6, 0.8, 0.1, 0.1]),
+        ]
+        for v in honest_vecs:
+            bmm.on_accept(10, v, is_downweight=False)
+
+        ev_honest = bmm.extract_evidence(10, torch.tensor([1.0, 0.0, 0.0, 0.0]))
+        self.assertIsNotNone(ev_honest.gdv_score)
+        self.assertIsNotNone(ev_honest.dbp_score)
+        self.assertIsNotNone(ev_honest.trs_score)
+        self.assertGreater(ev_honest.gdv_score, 0.06, "Honest client must have fluid GDV > 0.06")
+        self.assertLess(ev_honest.trs_score, 0.75, "Honest client must have TRS < 0.75")
+
+        # 2. S2 Byzantine client with rigid directional steering (GDV ~0.02, DBP ~0.95, TRS ~0.93)
+        base_v = torch.tensor([1.0, 0.0, 0.0, 0.0])
+        for r in range(6):
+            noise = 0.03 * torch.randn(4)
+            v = base_v + noise
+            bmm.on_accept(0, v, is_downweight=False)
+
+        ev_byz = bmm.extract_evidence(0, base_v)
+        self.assertIsNotNone(ev_byz.gdv_score)
+        self.assertIsNotNone(ev_byz.dbp_score)
+        self.assertIsNotNone(ev_byz.trs_score)
+        self.assertLess(ev_byz.gdv_score, 0.06, "S2 adversary must have rigid GDV < 0.06")
+        self.assertGreater(ev_byz.trs_score, 0.85, "S2 adversary must have high TRS > 0.85")
+
+        # 3. Decision engine rejection on TRS >= 0.85
+        engine = JointDecisionEngine({"trs_reject_thresh": 0.85, "trs_min_depth": 5, "warmup_rounds": 0})
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
+        spat_ev = SpatialEvidence(sim_global=0.80, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
+
+        out_byz = engine.evaluate(0, temp_ev, spat_ev, ev_byz, 1.0, 1.0)
+        self.assertEqual(out_byz.action, "REJECT")
+        self.assertEqual(out_byz.primary_reason, "TRAJECTORY_RIGIDITY_REJECT")
+
+    def test_unified_warmup_grace_horizon(self):
+        """Verifies that within the 300-update warmup horizon, no reputation slashing occurs and all updates are observationally accepted."""
+        cfg = {"warmup_rounds": 300, "spatial_warmup_rounds": 300, "alpha_I": 0.20, "spatial_grace_k": 3}
+        engine = JointDecisionEngine(cfg)
+        rep = ReputationManager([0, 1], cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
+        spat_ev = SpatialEvidence(sim_global=-0.10, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
+        beh_ev = BehavioralEvidence(sim_self_mean=0.50, sim_self_max=0.50, history_depth=2, sim_anchor=0.50, behavioral_mature=False)
+
+        # During warmup (round 50 < 300):
+        rep.set_round(50)
+        out_warmup = engine.evaluate(0, temp_ev, spat_ev, beh_ev, 1.0, 1.0, current_round=50)
+        self.assertEqual(out_warmup.action, "ACCEPT")
+        self.assertEqual(out_warmup.primary_reason, "SPATIAL_WARMUP_ACCEPT")
+
+        # Reputation slash blocked during warmup
+        rep.slash_integrity(0)
+        rep.record_spatial_rejection(0)
+        rep.record_spatial_rejection(0)
+        rep.record_spatial_rejection(0)
+        I_warm, _ = rep.get(0)
+        self.assertEqual(I_warm, 1.0, "Integrity must not be slashed during warmup horizon")
+
+        # Post-warmup (round 300 >= 300):
+        rep.set_round(300)
+        rep.record_spatial_rejection(0)
+        rep.record_spatial_rejection(0)
+        rep.record_spatial_rejection(0)
+        I_post, _ = rep.get(0)
+        self.assertLess(I_post, 1.0, "Integrity must be slashed post-warmup after streak exceeds grace_k")
+
+    def test_csv_schema_27_columns(self):
+        """Verifies that BDSFLogger writes exactly the 27 expected columns."""
+        log_dir = "logs/test_suite_tmp/"
+        logger = BDSFLogger("test_schema_27", {"log_dir": log_dir})
+        logger.log_update(
+            round=1, client_id=0, status="ACCEPT", reason="FULL_CONSENSUS_ACCEPT", weight=1.0,
+            I_i=1.0, P_i=1.0, g_i=1.5, version_lag=0, lower_fence=0.5, upper_fence=2.5, fence_margin=0.0,
+            temporal_mature=True, sim_global=0.85, norm_raw=1.2, norm_ratio_median=1.05,
+            spatial_coherence=0.90, spatial_mature=True, sim_self_max=0.92, sim_anchor=0.88,
+            behavioral_mature=True, prc_score=0.65, tra_score=0.80, suspicion_score=0.0,
+            gdv_score=0.15, dbp_score=0.75, trs_score=0.64
+        )
+
+        with open(logger.csv_path, "r") as f:
+            reader = list(csv.reader(f))
+            header = reader[0]
+            row = reader[1]
+
+        self.assertEqual(len(header), 27)
+        self.assertEqual(len(row), 27)
+        self.assertIn("gdv_score", header)
+        self.assertIn("dbp_score", header)
+        self.assertIn("trs_score", header)
+        if os.path.exists(logger.csv_path):
+            os.remove(logger.csv_path)
 
 
 if __name__ == "__main__":

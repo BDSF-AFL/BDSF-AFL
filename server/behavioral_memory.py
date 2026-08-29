@@ -137,6 +137,27 @@ class ClientBehavioralProfile:
             return float(max(0.0, 1.0 - dot_val))
         return 0.0
 
+    def compute_gdv(self) -> Optional[float]:
+        """Std of consecutive pairwise cosine similarities in gradient_memory. Requires depth >= 4."""
+        if len(self.gradient_memory) < 4:
+            return None
+        vecs = [v.float() for v in self.gradient_memory]
+        sims = [torch.dot(vecs[i], vecs[i+1]).item() for i in range(len(vecs)-1)]
+        return float(np.std(sims))
+
+    def compute_dbp(self) -> Optional[float]:
+        """Mean all-pairs cosine similarity within gradient_memory. Requires depth >= 3."""
+        if len(self.gradient_memory) < 3:
+            return None
+        vecs = [v.float() for v in self.gradient_memory]
+        sims = []
+        for i in range(len(vecs)):
+            for j in range(i+1, len(vecs)):
+                sims.append(torch.dot(vecs[i], vecs[j]).item())
+        if len(sims) == 0:
+            return None
+        return float(np.mean(sims))
+
     @property
     def depth(self) -> int:
         """Number of valid historical updates currently in memory."""
@@ -216,11 +237,14 @@ class BehavioralMemoryManager:
         depth = profile.depth
         behavioral_mature = (depth >= self.min_history)
 
-        # 1. Compute cadence consistency, genesis anchor similarities, and drift
+        # 1. Compute cadence consistency, genesis anchor similarities, drift, and trajectory scores
         cadence_consistency = self._compute_cadence_consistency(g_i, client_gap_history)
         sim_anchor, sim_frozen_anchor = profile.compute_anchor_similarity(delta_W)
         anchor_drift = profile.compute_anchor_drift()
         consecutive_dw = profile.consecutive_downweights
+        gdv_score = profile.compute_gdv()
+        dbp_score = profile.compute_dbp()
+        trs_score = (dbp_score * (1.0 - gdv_score)) if (dbp_score is not None and gdv_score is not None) else None
 
         # If not enough gradient trajectory history exists yet, return None for self-trajectory metrics
         if not behavioral_mature:
@@ -235,6 +259,9 @@ class BehavioralMemoryManager:
                 sim_frozen_anchor=sim_frozen_anchor,
                 anchor_drift=anchor_drift,
                 consecutive_dw=consecutive_dw,
+                gdv_score=gdv_score,
+                dbp_score=dbp_score,
+                trs_score=trs_score,
                 behavioral_mature=False,
             )
 
@@ -274,6 +301,9 @@ class BehavioralMemoryManager:
             sim_frozen_anchor=sim_frozen_anchor,
             anchor_drift=anchor_drift,
             consecutive_dw=consecutive_dw,
+            gdv_score=gdv_score,
+            dbp_score=dbp_score,
+            trs_score=trs_score,
             behavioral_mature=True,
         )
 
