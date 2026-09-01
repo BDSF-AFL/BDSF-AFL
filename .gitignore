@@ -18,3 +18,5 @@ audit_report.md
 benchmarks.md 
 upgrade_plan.md
 graphify-out/
+docs/
+docs/adr/

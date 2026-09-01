@@ -10,12 +10,12 @@ class BasicBlock(nn.Module):
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
         )
-        self.bn1 = nn.GroupNorm(num_groups=2, num_channels=planes)
+        self.bn1 = nn.GroupNorm(num_groups=32, num_channels=planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(
             planes, planes, kernel_size=3, stride=1, padding=1, bias=False
         )
-        self.bn2 = nn.GroupNorm(num_groups=2, num_channels=planes)
+        self.bn2 = nn.GroupNorm(num_groups=32, num_channels=planes)
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
@@ -23,7 +23,7 @@ class BasicBlock(nn.Module):
                 nn.Conv2d(
                     in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False
                 ),
-                nn.GroupNorm(num_groups=2, num_channels=self.expansion * planes)
+                nn.GroupNorm(num_groups=32, num_channels=self.expansion * planes)
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -40,7 +40,7 @@ class CIFAR10ResNet18(nn.Module):
     Modifications for 32x32 resolution and Federated Learning:
     - 3x3 stride-1 initial convolution (instead of 7x7 stride-2).
     - MaxPool replaced with nn.Identity() to preserve 32x32 spatial resolution in Layer 1.
-    - GroupNorm(2, channels) replacing BatchNorm2d to eliminate un-synchronized running stats divergence.
+    - GroupNorm(32, channels) replacing BatchNorm2d to eliminate un-synchronized running stats divergence while preventing channel smearing.
     - 512 -> 10 output linear classifier.
     """
     def __init__(self, num_classes: int = 10):
@@ -49,7 +49,7 @@ class CIFAR10ResNet18(nn.Module):
 
         # CIFAR-adapted conv1: preserves 32x32 feature map
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.GroupNorm(num_groups=2, num_channels=64)
+        self.bn1 = nn.GroupNorm(num_groups=32, num_channels=64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.Identity()
 

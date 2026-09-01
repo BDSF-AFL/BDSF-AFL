@@ -89,6 +89,8 @@ class JointDecisionEngine:
         depth = behavioral_ev.history_depth
 
         v_lag = version_lag if version_lag != 0 else getattr(temporal_ev, "version_lag", 0)
+        # Asynchronous Staleness Penalty Matrix: dampens variance window of delayed gradients
+        staleness_factor = 1.0 / math.sqrt(1.0 + v_lag)
         sim_frozen = getattr(behavioral_ev, "sim_frozen_anchor", None)
         drift_a = getattr(behavioral_ev, "anchor_drift", None)
         gdv = getattr(behavioral_ev, "gdv_score", None)
@@ -161,7 +163,7 @@ class JointDecisionEngine:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="SPATIAL_WARMUP_ACCEPT",
-                aggregation_weight=self.warmup_weight_factor * (I_i * P_i),
+                aggregation_weight=self.warmup_weight_factor * (I_i * P_i) * staleness_factor,
                 force_sync_required=False,
                 diagnostic_features={
                     "priority": 0,
@@ -254,7 +256,7 @@ class JointDecisionEngine:
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
-                aggregation_weight=1.0 * (I_i * P_i),
+                aggregation_weight=1.0 * (I_i * P_i) * staleness_factor,
                 force_sync_required=False,
                 diagnostic_features={
                     "priority": 2,
@@ -340,7 +342,7 @@ class JointDecisionEngine:
             return JointDecisionOutcome(
                 action="DOWNWEIGHT",
                 primary_reason=reason,
-                aggregation_weight=alpha_eff * (I_i * P_i),
+                aggregation_weight=alpha_eff * (I_i * P_i) * staleness_factor,
                 force_sync_required=False,
                 diagnostic_features={
                     "priority": 4,
@@ -392,7 +394,7 @@ class JointDecisionEngine:
             return JointDecisionOutcome(
                 action="DOWNWEIGHT",
                 primary_reason="EARLY_STAGE_NON_IID_HOLD",
-                aggregation_weight=alpha_eff * (I_i * P_i),
+                aggregation_weight=alpha_eff * (I_i * P_i) * staleness_factor,
                 force_sync_required=False,
                 diagnostic_features={
                     "priority": 4,
