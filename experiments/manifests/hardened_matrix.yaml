@@ -37,10 +37,10 @@ experiment:
   spatial_warmup_rounds: 300
   temporal_min_samples: 300
   norm_anomaly_threshold: 1.60
-  trs_reject_thresh: 0.85
-  trs_warn_thresh: 0.80
-  trs_safe_thresh: 0.70
-  trs_min_depth: 5
+  trs_reject_thresh: 0.99
+  trs_warn_thresh: 0.95
+  trs_safe_thresh: 0.90
+  trs_min_depth: 300
   alpha_I: 0.20
   alpha_P: 0.15
   beta_I: 0.08
