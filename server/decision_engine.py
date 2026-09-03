@@ -110,33 +110,6 @@ class JointDecisionEngine:
         tra = spatial_ev.tra_score
         prc = spatial_ev.prc_score
 
-        # Multi-Round Suspicion Accumulator
-        # Suspicion accumulates ONLY when a client is out of consensus or exhibiting anomalous residuals
-        is_consensus_exempt = (
-            self.trs_consensus_exempt and
-            sim_g is not None and
-            sim_g >= (effective_theta_cos + self.trs_consensus_margin)
-        )
-        is_consensus_aligned = (
-            (sim_g is not None and sim_g >= effective_theta_cos) and
-            (prc is None or prc >= self.theta_prc) and
-            (tra is None or tra >= self.theta_tra) and
-            (is_consensus_exempt or trs is None or depth < self.trs_min_depth or trs < self.trs_warn_thresh)
-        )
-        if is_consensus_aligned:
-            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
-        elif trs is not None and gdv is not None and trs >= self.trs_warn_thresh and gdv <= 0.10 and not is_consensus_exempt:
-            # Out-of-consensus or borderline persistent rigid steering
-            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
-        elif tra is not None and tra < self.theta_tra:
-            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
-        elif prc is not None and prc < self.theta_prc:
-            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
-        else:
-            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.02)
-        S_i = self.suspicion_scores.get(cid, 0.0)
-        spatial_ev.suspicion_score = S_i
-
         # ---------------------------------------------------------------------
         # PHASE 0: Universal Safety Pre-Checks (Active ALWAYS, even during warmup)
         # ---------------------------------------------------------------------
@@ -197,6 +170,42 @@ class JointDecisionEngine:
                     "dbp_score": dbp,
                 }
             )
+
+        # Multi-Round Suspicion Accumulator
+        # Suspicion accumulates ONLY when a client is out of consensus or exhibiting anomalous residuals
+        
+        sim_a = behavioral_ev.sim_anchor
+        is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
+        is_minority_candidate = (
+            self.trs_consensus_exempt and
+            is_minority_consistent and
+            (sim_g is not None and sim_g >= -self.theta_floor)
+        )
+
+        is_consensus_exempt = (
+            self.trs_consensus_exempt and
+            sim_g is not None and
+            sim_g >= (effective_theta_cos + self.trs_consensus_margin)
+        )
+        is_consensus_aligned = (
+            (sim_g is not None and sim_g >= effective_theta_cos) and
+            (prc is None or prc >= self.theta_prc) and
+            (tra is None or tra >= self.theta_tra) and
+            (is_consensus_exempt or trs is None or depth < self.trs_min_depth or trs < self.trs_warn_thresh)
+        )
+        if is_consensus_aligned or is_minority_candidate:
+            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
+        elif trs is not None and gdv is not None and trs >= self.trs_warn_thresh and gdv <= 0.10 and not is_consensus_exempt:
+            # Out-of-consensus or borderline persistent rigid steering
+            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
+        elif tra is not None and tra < self.theta_tra:
+            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
+        elif prc is not None and prc < self.theta_prc:
+            self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
+        else:
+            self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.02)
+        S_i = self.suspicion_scores.get(cid, 0.0)
+        spatial_ev.suspicion_score = S_i
 
         # ---------------------------------------------------------------------
         # PHASE 2: Post-Warmup Active Multi-Criteria Defense
