@@ -23,6 +23,7 @@ experiment:
   theta_anchor_min: 0.25
   theta_anchor_mature: 0.25
   theta_cos: 0.15
+  stochastic_jitter_max: 0.08
   adaptive_clip_enabled: true
   gamma_clip: 1.10
   theta_prc: 0.20
@@ -42,6 +43,7 @@ experiment:
   trs_safe_thresh: 0.70
   trs_min_depth: 5
   trs_consensus_exempt: true
+  trs_consensus_margin: 0.10
   alpha_I: 0.20
   alpha_P: 0.15
   beta_I: 0.08

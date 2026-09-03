@@ -53,6 +53,7 @@ class JointDecisionEngine:
         self.trs_min_depth: int = int(config.get("trs_min_depth", 5))
         self.trs_accept_thresh: float = float(config.get("trs_accept_thresh", self.trs_reject_thresh))
         self.trs_consensus_exempt: bool = bool(config.get("trs_consensus_exempt", False))
+        self.trs_consensus_margin: float = float(config.get("trs_consensus_margin", 0.10))
 
         # --- Pairwise Residual Coherence (PRC) & TRA ---
         self.theta_prc: float = config.get("theta_prc", 0.20)
@@ -111,16 +112,21 @@ class JointDecisionEngine:
 
         # Multi-Round Suspicion Accumulator
         # Suspicion accumulates ONLY when a client is out of consensus or exhibiting anomalous residuals
+        is_consensus_exempt = (
+            self.trs_consensus_exempt and
+            sim_g is not None and
+            sim_g >= (effective_theta_cos + self.trs_consensus_margin)
+        )
         is_consensus_aligned = (
             (sim_g is not None and sim_g >= effective_theta_cos) and
             (prc is None or prc >= self.theta_prc) and
             (tra is None or tra >= self.theta_tra) and
-            (self.trs_consensus_exempt or trs is None or depth < self.trs_min_depth or trs < self.trs_warn_thresh)
+            (is_consensus_exempt or trs is None or depth < self.trs_min_depth or trs < self.trs_warn_thresh)
         )
         if is_consensus_aligned:
             self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
-        elif trs is not None and gdv is not None and trs >= self.trs_warn_thresh and gdv <= 0.10 and (not self.trs_consensus_exempt or (sim_g is None or sim_g < effective_theta_cos)):
-            # Out-of-consensus persistent rigid steering
+        elif trs is not None and gdv is not None and trs >= self.trs_warn_thresh and gdv <= 0.10 and not is_consensus_exempt:
+            # Out-of-consensus or borderline persistent rigid steering
             self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
         elif tra is not None and tra < self.theta_tra:
             self.suspicion_scores[cid] = min(1.0, self.suspicion_scores.get(cid, 0.0) + self.suspicion_step)
@@ -262,7 +268,7 @@ class JointDecisionEngine:
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
         is_suspicion_clean = (S_i < 0.30)
         is_prc_valid = (prc is None or prc >= self.theta_prc)
-        is_trs_clean = (trs is None or depth < self.trs_min_depth or trs < self.trs_accept_thresh or (self.trs_consensus_exempt and is_spatial_valid))
+        is_trs_clean = (trs is None or depth < self.trs_min_depth or trs < self.trs_accept_thresh or is_consensus_exempt)
 
         if (is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and
             is_suspicion_clean and is_prc_valid and is_trs_clean):
@@ -293,7 +299,16 @@ class JointDecisionEngine:
         # PRIORITY 3: Trajectory Rigidity Rejection (Primary Mimicry/Compound Defense)
         # ---------------------------------------------------------------------
         # Triggers when update is out of consensus or anomalous AND exhibits rigid directional steering
-        is_trs_reject_applicable = (not self.trs_consensus_exempt) or (sim_g is None or sim_g < effective_theta_cos)
+        sim_a = behavioral_ev.sim_anchor
+        is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
+        is_minority_candidate = (
+            self.trs_consensus_exempt and
+            is_minority_consistent and
+            (sim_g is not None and sim_g >= -self.theta_floor)
+        )
+        is_trs_reject_applicable = (not self.trs_consensus_exempt) or (
+            (sim_g is None or sim_g < (effective_theta_cos + self.trs_consensus_margin)) and not is_minority_candidate
+        )
         if trs is not None and trs >= self.trs_reject_thresh and depth >= self.trs_min_depth and is_trs_reject_applicable:
             return JointDecisionOutcome(
                 action="REJECT",
@@ -431,7 +446,7 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 6: Adversarial / Inconsistent Fallthrough (REJECT & SLASH)
         # ---------------------------------------------------------------------
-        if trs is not None and trs >= self.trs_reject_thresh and ((not self.trs_consensus_exempt) or (sim_g is None or sim_g < effective_theta_cos)):
+        if trs is not None and trs >= self.trs_reject_thresh and ((not self.trs_consensus_exempt) or (sim_g is None or sim_g < (effective_theta_cos + self.trs_consensus_margin))):
             primary_reason = "TRAJECTORY_RIGIDITY_REJECT"
         elif S_i >= self.suspicion_reject_thresh:
             primary_reason = "PROGRESSIVE_SUSPICION_TRAJECTORY_REJECT"
