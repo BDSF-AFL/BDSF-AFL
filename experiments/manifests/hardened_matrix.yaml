@@ -40,7 +40,7 @@ experiment:
   trs_reject_thresh: 0.99
   trs_warn_thresh: 0.95
   trs_safe_thresh: 0.90
-  trs_min_depth: 300
+  trs_min_depth: 5
   alpha_I: 0.20
   alpha_P: 0.15
   beta_I: 0.08
