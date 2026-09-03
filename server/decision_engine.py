@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 import math
+import random
 import numpy as np
 import torch
 
@@ -26,6 +27,7 @@ class JointDecisionEngine:
     def __init__(self, config: dict):
         self.config = config
         self.theta_cos: float = config.get("theta_cos", 0.10)
+        self.stochastic_jitter_max: float = float(config.get("stochastic_jitter_max", 0.04))
         self.theta_self: float = config.get("theta_self", 0.30)
         self.theta_floor: float = config.get("theta_floor", 0.40)
         self.theta_anchor_min: float = config.get("theta_anchor_min", 0.25)
@@ -74,7 +76,13 @@ class JointDecisionEngine:
         version_lag: int = 0,
     ) -> JointDecisionOutcome:
         """Deterministically evaluates candidate update evidence against Priority 0-6 hierarchy."""
-        
+        # Apply deterministic stochastic jitter to the cosine threshold if configured
+        if self.stochastic_jitter_max > 0.0:
+            rng = random.Random(f"{current_round}_{cid}")
+            effective_theta_cos = self.theta_cos + rng.uniform(0.0, self.stochastic_jitter_max)
+        else:
+            effective_theta_cos = self.theta_cos
+
         sim_g = spatial_ev.sim_global
         sim_s_mean = behavioral_ev.sim_self_mean
         sim_s_max = behavioral_ev.sim_self_max
@@ -103,7 +111,7 @@ class JointDecisionEngine:
         # Multi-Round Suspicion Accumulator
         # Suspicion accumulates ONLY when a client is out of consensus or exhibiting anomalous residuals
         is_consensus_aligned = (
-            (sim_g is not None and sim_g >= self.theta_cos) and
+            (sim_g is not None and sim_g >= effective_theta_cos) and
             (prc is None or prc >= self.theta_prc) and
             (tra is None or tra >= self.theta_tra) and
             (trs is None or depth < self.trs_min_depth or trs < self.trs_warn_thresh)
@@ -247,7 +255,7 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
-        is_spatial_valid = (sim_g is not None and sim_g >= self.theta_cos)
+        is_spatial_valid = (sim_g is not None and sim_g >= effective_theta_cos)
         is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or is_spatial_valid)
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
@@ -310,7 +318,7 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         c_dw = behavioral_ev.consecutive_dw
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
-        is_anchor_valid_p4 = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or (sim_g is not None and sim_g >= self.theta_cos))
+        is_anchor_valid_p4 = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or (sim_g is not None and sim_g >= effective_theta_cos))
         sim_a = behavioral_ev.sim_anchor
         is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
@@ -372,7 +380,7 @@ class JointDecisionEngine:
         # PRIORITY 5: Ambiguous / Borderline Evidence (QUARANTINE)
         # ---------------------------------------------------------------------
         if self.enable_quarantine:
-            is_borderline_spatial = (sim_g is not None and abs(sim_g - self.theta_cos) <= self.delta_borderline and not behavioral_ev.behavioral_mature)
+            is_borderline_spatial = (sim_g is not None and abs(sim_g - effective_theta_cos) <= self.delta_borderline and not behavioral_ev.behavioral_mature)
             is_moderate_temporal_trusted = (temporal_ev.temporal_mature and 0.0 < g_margin <= self.delta_temp_mod and I_i >= self.trusted_integrity_min and (sim_g is None or sim_g >= 0.0))
 
             if is_borderline_spatial or is_moderate_temporal_trusted:

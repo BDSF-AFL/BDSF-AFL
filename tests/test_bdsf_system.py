@@ -57,6 +57,7 @@ class TestBDSFSystem(unittest.TestCase):
             "quarantine_horizon": 5,
             "quarantine_capacity": 20,
             "delta_borderline": 0.05,
+            "stochastic_jitter_max": 0.0,
             "trusted_integrity_min": 0.80,
             "behavioral_history_size": 10,
             "behavioral_min_history": 3,
@@ -937,7 +938,31 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertGreaterEqual(engine_susp.suspicion_scores[1], 0.15, "Suspicion must accumulate when TRS exceeds warn threshold")
 
 
+    def test_stochastic_jitter_determinism(self):
+        """Verifies that stochastic jitter randomizes effective_theta_cos deterministically based on round and cid."""
+        cfg = self.config.copy()
+        cfg["stochastic_jitter_max"] = 0.04
+        cfg["theta_cos"] = 0.10
+        engine1 = JointDecisionEngine(cfg)
+        engine2 = JointDecisionEngine(cfg)
+        
+        # We'll probe the threshold by finding the exact boundary
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=1)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.9, sim_self_max=0.9, history_depth=5, sim_anchor=0.9, behavioral_mature=True)
+        
+        import random
+        expected_threshold = 0.10 + random.Random("10_0").uniform(0, 0.04)
+        
+        spat_ev_pass = SpatialEvidence(sim_global=expected_threshold + 0.0001, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
+        spat_ev_fail = SpatialEvidence(sim_global=expected_threshold - 0.0001, norm_raw=1.0, norm_clipped=1.0, norm_ratio_median=1.0, dynamic_bound_C=2.0, reference_available=True, spatial_mature=True)
+        
+        # Pass
+        out_pass = engine1.evaluate(0, temp_ev, spat_ev_pass, behav_ev, 1.0, 1.0, current_round=10)
+        self.assertEqual(out_pass.action, "ACCEPT", "Must accept when slightly above jittered threshold")
+        
+        # Fail
+        out_fail = engine2.evaluate(0, temp_ev, spat_ev_fail, behav_ev, 1.0, 1.0, current_round=10)
+        self.assertNotEqual(out_fail.action, "ACCEPT", "Must reject/quarantine when slightly below jittered threshold")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
-
