@@ -16,8 +16,8 @@ class JointDecisionEngine:
       - Phase 1: Observation Warmup Horizon (Rounds 0 - warmup_rounds / 300 updates)
       - Phase 2: Post-Warmup Active Defense:
           - Priority 1: Invariant Hard Violations (Global Directional Inversion, Temporal Spam/Straggler)
-          - Priority 2: Trajectory Rigidity Rejection (TRS >= trs_reject_thresh — Primary Mimicry/Compound Defense)
-          - Priority 3: Full Consensus Acceptance (sim_g >= theta_cos, clean TRS & suspicion)
+          - Priority 2: Full Consensus Acceptance (sim_g >= theta_cos, clean TRS & suspicion)
+          - Priority 3: Trajectory Rigidity Rejection (TRS >= trs_reject_thresh — Primary Mimicry/Compound Defense)
           - Priority 4: Non-IID Honest Soft-Filtering (DOWNWEIGHT with dynamic attenuation & drift bounding)
           - Priority 5: Ambiguous / Borderline Quarantine
           - Priority 6: Adversarial Fallthrough (REJECT)
@@ -49,6 +49,7 @@ class JointDecisionEngine:
         self.trs_warn_thresh: float = float(config.get("trs_warn_thresh", 0.80))
         self.trs_safe_thresh: float = float(config.get("trs_safe_thresh", 0.70))
         self.trs_min_depth: int = int(config.get("trs_min_depth", 5))
+        self.trs_accept_thresh: float = float(config.get("trs_accept_thresh", self.trs_reject_thresh))
 
         # --- Pairwise Residual Coherence (PRC) & TRA ---
         self.theta_prc: float = config.get("theta_prc", 0.20)
@@ -104,7 +105,8 @@ class JointDecisionEngine:
         is_consensus_aligned = (
             (sim_g is not None and sim_g >= self.theta_cos) and
             (prc is None or prc >= self.theta_prc) and
-            (tra is None or tra >= self.theta_tra)
+            (tra is None or tra >= self.theta_tra) and
+            (trs is None or depth < self.trs_min_depth or trs < self.trs_warn_thresh)
         )
         if is_consensus_aligned:
             self.suspicion_scores[cid] = max(0.0, self.suspicion_scores.get(cid, 0.0) * self.suspicion_decay - 0.05)
@@ -251,8 +253,10 @@ class JointDecisionEngine:
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
         is_suspicion_clean = (S_i < 0.30)
         is_prc_valid = (prc is None or prc >= self.theta_prc)
+        is_trs_clean = (trs is None or depth < self.trs_min_depth or trs < self.trs_accept_thresh)
 
-        if is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and is_suspicion_clean and is_prc_valid:
+        if (is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and
+            is_suspicion_clean and is_prc_valid and is_trs_clean):
             return JointDecisionOutcome(
                 action="ACCEPT",
                 primary_reason="FULL_CONSENSUS_ACCEPT",
@@ -272,6 +276,7 @@ class JointDecisionEngine:
                     "prc_score": prc,
                     "tra_score": tra,
                     "suspicion_score": S_i,
+                    "is_trs_clean": is_trs_clean,
                 }
             )
 
@@ -296,6 +301,7 @@ class JointDecisionEngine:
                     "version_lag": v_lag,
                     "sim_frozen_anchor": sim_frozen,
                     "anchor_drift": drift_a,
+                    "is_trs_clean": False,
                 }
             )
 

@@ -888,6 +888,54 @@ class TestBDSFSystem(unittest.TestCase):
         if os.path.exists(logger.csv_path):
             os.remove(logger.csv_path)
 
+    def test_trs_gates_full_consensus_acceptance_and_suspicion_accumulation(self):
+        """Verifies that TRS prevents false FULL_CONSENSUS_ACCEPT for mimicry attacks and triggers suspicion accumulation."""
+        cfg = {
+            "theta_cos": 0.10,
+            "theta_self": 0.30,
+            "trs_reject_thresh": 0.85,
+            "trs_warn_thresh": 0.80,
+            "trs_min_depth": 5,
+            "suspicion_step": 0.15,
+            "warmup_rounds": 0,
+        }
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True)
+        # S2 attacker crafted update: satisfies spatial consensus (sim_g=0.50 >> theta_cos=0.10) and has clean residuals (prc=0.50, tra=0.60)
+        spat_ev = SpatialEvidence(sim_global=0.50, norm_raw=1.0, norm_clipped=1.0, reference_available=True, spatial_mature=True, prc_score=0.50, tra_score=0.60)
+        beh_ev_rigid = BehavioralEvidence(
+            sim_self_mean=0.80,
+            sim_self_max=0.85,
+            history_depth=6,
+            sim_anchor=0.70,
+            behavioral_mature=True,
+            trs_score=0.88,
+            gdv_score=0.03,
+            dbp_score=0.91,
+        )
+
+        # 1. Rigid update (TRS=0.88 >= 0.85) must NOT be accepted via FULL_CONSENSUS_ACCEPT
+        outcome = engine.evaluate(0, temp_ev, spat_ev, beh_ev_rigid, 1.0, 1.0, current_round=100)
+        self.assertEqual(outcome.action, "REJECT")
+        self.assertEqual(outcome.primary_reason, "TRAJECTORY_RIGIDITY_REJECT")
+        self.assertFalse(outcome.diagnostic_features.get("is_trs_clean", True))
+
+        # 2. Suspicion accumulation: update with warn TRS (0.82 >= trs_warn_thresh) must accumulate suspicion
+        engine_susp = JointDecisionEngine(cfg)
+        beh_ev_warn = BehavioralEvidence(
+            sim_self_mean=0.80,
+            sim_self_max=0.85,
+            history_depth=6,
+            sim_anchor=0.70,
+            behavioral_mature=True,
+            trs_score=0.82,
+            gdv_score=0.05,
+            dbp_score=0.86,
+        )
+        engine_susp.evaluate(1, temp_ev, spat_ev, beh_ev_warn, 1.0, 1.0, current_round=100)
+        self.assertGreaterEqual(engine_susp.suspicion_scores[1], 0.15, "Suspicion must accumulate when TRS exceeds warn threshold")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
