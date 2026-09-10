@@ -15,6 +15,7 @@ from server.spatial_validator import SpatialValidator
 from server.behavioral_memory import BehavioralMemoryManager
 from server.decision_engine import JointDecisionEngine
 from server.quarantine_manager import QuarantineManager
+from server.subspace_engine import SubspaceProjectionEngine
 from utils.logger import BDSFLogger
 
 
@@ -78,6 +79,21 @@ class AggregatorServer:
         self.decision_mode: str = config.get("decision_mode", "joint")
         self.decision_engine = JointDecisionEngine(config)
         self.quarantine_manager = QuarantineManager(config)
+
+        # Step 10d: Instantiate Subspace Projection Engine (BDSF-AFL v2)
+        self.enable_subspace: bool = config.get("enable_subspace", True)
+        if self.enable_subspace:
+            self.subspace_engine = SubspaceProjectionEngine(
+                K=config.get("subspace_K", 10),
+                eps_floor=float(config.get("subspace_eps_floor", 0.05)),
+                alpha=float(config.get("subspace_alpha", 0.6)),
+                lam=float(config.get("subspace_lam", 3.0)),
+                beta=float(config.get("subspace_beta", 0.85)),
+                kappa=float(config.get("subspace_kappa", 0.10)),
+                default_m_perp_base=float(config.get("subspace_m_perp_base", 2.0)),
+            )
+        else:
+            self.subspace_engine = None
 
         # Step 11: Accepted buffer (shared concept with SpatialValidator)
         self.accepted_buffer: deque[AcceptedEntry] = deque(maxlen=M)
@@ -359,6 +375,34 @@ class AggregatorServer:
         if self.decision_mode == "joint":
             self.temporal_filter.step_seen()
 
+        # --- Subspace Manifold Gating & Orthogonal Damping (BDSF-AFL v2) ---
+        sub_metrics = None
+        if self.enable_subspace and self.subspace_engine is not None and self.subspace_engine.is_basis_full():
+            v_clean, sub_metrics = self.subspace_engine.filter_update(
+                cid=cid,
+                v=submission.delta_W,
+                tau=float(version_lag),
+            )
+            if sub_metrics["action"] == "REJECT":
+                self.rep_manager.record_spatial_rejection(cid)
+                reg.last_update_time = t_now
+                I_i, P_i = self.rep_manager.get(cid)
+                self._log_update(
+                    round=self.round_number, client_id=cid,
+                    status="REJECT", reason=sub_metrics["reason"], weight=None,
+                    I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
+                )
+                self.consecutive_rejects += 1
+                return {
+                    "status": "REJECT",
+                    "reason": sub_metrics["reason"],
+                    "force_sync": None,
+                    "round": self.round_number,
+                    "I_i": I_i,
+                    "P_i": P_i,
+                }
+            submission.delta_W = v_clean
+
         # --- Evidence Extraction (Observability Layer) ---
         temporal_evidence = self.temporal_filter.extract_evidence(g_i, cid, version_lag=version_lag)
         spatial_evidence = self.spatial_validator.extract_evidence(submission.delta_W, client_id=cid)
@@ -370,8 +414,6 @@ class AggregatorServer:
             client_gap_history=client_gaps,
         )
 
-        # --------------------------------------------------------------
-        # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
         # --------------------------------------------------------------
         # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
         # --------------------------------------------------------------
@@ -387,7 +429,7 @@ class AggregatorServer:
             )
 
             delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
-            eta = self.config.get("eta", 1.0)
+            eta = self.config.get("eta", 0.01)
 
             # 1. Handle ACCEPT Action (Full Consensus / Warm-Up)
             if outcome.action == "ACCEPT":
@@ -395,6 +437,16 @@ class AggregatorServer:
                 self._apply_global_update(eta * weight * delta_W_clipped)
 
                 is_warmup = (outcome.primary_reason in ["SPATIAL_WARMUP_ACCEPT", "BURN_IN_ACCEPT"])
+
+                # Consensus Basis Q Admission Policy (Council Approved):
+                # 1. Warmup / Cold-Start: bootstrap initial queue up to K vectors
+                # 2. Post-Warmup: admit full-consensus ACCEPT updates
+                if self.enable_subspace and self.subspace_engine is not None:
+                    if is_warmup:
+                        if not self.subspace_engine.is_basis_full():
+                            self.subspace_engine.update_basis(delta_W_clipped)
+                    else:
+                        self.subspace_engine.update_basis(delta_W_clipped)
 
                 entry = AcceptedEntry(
                     delta_W=delta_W_clipped.clone(),
@@ -445,14 +497,14 @@ class AggregatorServer:
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
-                            version_lag=version_lag,
+                            version_lag=max(0, self.round_number - q_entry.entry_round),
                             weight=q_w,
                         )
                     elif q_act == "REJECT":
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
-                            version_lag=version_lag,
+                            version_lag=max(0, self.round_number - q_entry.entry_round),
                             weight=None,
                         )
 
@@ -923,6 +975,7 @@ class AggregatorServer:
         """Applies momentum-enhanced asynchronous aggregation and increments model version.
         effective_delta is already scaled by eta and decision weight (1.0 for ACCEPT, 0.5 for DW).
         """
+        effective_delta = effective_delta.to(device=self.W_global.device, dtype=self.W_global.dtype)
         if self.server_momentum > 0.0:
             self.v_momentum = self.server_momentum * self.v_momentum + effective_delta
             self.W_global = self.W_global + self.v_momentum
@@ -959,6 +1012,7 @@ class AggregatorServer:
             "behavioral_profiles": self.behavioral_memory.get_state(),
             "quarantine_state": self.quarantine_manager.get_state(),
             "decision_engine_state": self.decision_engine.get_state(),
+            "subspace_state": self.subspace_engine.get_state() if self.subspace_engine is not None else None,
         }
 
     def load_state(self, state: dict) -> None:
@@ -999,6 +1053,9 @@ class AggregatorServer:
         de_state = state.get("decision_engine_state") or state.get("decision_engine")
         if de_state and hasattr(self.decision_engine, "load_state"):
             self.decision_engine.load_state(de_state)
+        sub_state = state.get("subspace_state") or state.get("subspace_engine")
+        if sub_state and self.subspace_engine is not None:
+            self.subspace_engine.load_state(sub_state, device=self.W_global.device)
 
     def accumulate_eval_time(self, duration: float) -> None:
         """Accrues CPU execution time spent on blocking evaluations."""
