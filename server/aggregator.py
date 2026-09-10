@@ -86,6 +86,7 @@ class AggregatorServer:
             self.subspace_engine = SubspaceProjectionEngine(
                 K=config.get("subspace_K", 10),
                 eps_floor=float(config.get("subspace_eps_floor", 0.05)),
+                c_min_floor=float(config.get("subspace_c_min_floor", 0.30)),
                 alpha=float(config.get("subspace_alpha", 0.6)),
                 lam=float(config.get("subspace_lam", 3.0)),
                 beta=float(config.get("subspace_beta", 0.85)),
@@ -438,16 +439,6 @@ class AggregatorServer:
 
                 is_warmup = (outcome.primary_reason in ["SPATIAL_WARMUP_ACCEPT", "BURN_IN_ACCEPT"])
 
-                # Consensus Basis Q Admission Policy (Council Approved):
-                # 1. Warmup / Cold-Start: bootstrap initial queue up to K vectors
-                # 2. Post-Warmup: admit full-consensus ACCEPT updates
-                if self.enable_subspace and self.subspace_engine is not None:
-                    if is_warmup:
-                        if not self.subspace_engine.is_basis_full():
-                            self.subspace_engine.update_basis(delta_W_clipped)
-                    else:
-                        self.subspace_engine.update_basis(delta_W_clipped)
-
                 entry = AcceptedEntry(
                     delta_W=delta_W_clipped.clone(),
                     I_score=I_i,
@@ -459,6 +450,15 @@ class AggregatorServer:
                 self.spatial_validator.on_accept(entry)
                 self.spatial_validator.record_residual(cid, delta_W_clipped)
                 self.temporal_filter.record_gap(g_i, cid)
+
+                # Consensus Basis Q Admission Policy (Council Approved):
+                # 1. Warmup / Cold-Start: Zero admission to Q (Q stays clean, no Trojan basis)
+                # 2. Post-Warmup: Update Q strictly from the server-aggregated spatial consensus reference (ref),
+                #    NEVER from raw individual client vectors! This eliminates S2 Mimicry single-client bisection.
+                if self.enable_subspace and self.subspace_engine is not None and not is_warmup:
+                    ref = self.spatial_validator._build_reference()
+                    if ref is not None:
+                        self.subspace_engine.update_basis(ref)
 
                 # Warmup updates build the client's historical trajectory & genesis anchor
                 self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False)

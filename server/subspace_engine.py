@@ -68,6 +68,7 @@ class SubspaceProjectionEngine:
         self,
         K: int = 10,
         eps_floor: float = 0.05,
+        c_min_floor: float = 0.30,
         alpha: float = 0.6,
         lam: float = 3.0,
         beta: float = 0.85,
@@ -77,6 +78,7 @@ class SubspaceProjectionEngine:
     ):
         self.K = K
         self.eps_floor = eps_floor
+        self.c_min_floor = c_min_floor
         self.alpha = alpha
         self.lam = lam
         self.beta = beta
@@ -223,19 +225,26 @@ class SubspaceProjectionEngine:
         if self.Q.device != device:
             self.Q = self.Q.to(device)
 
-        # 1. Gate 1: Macro Consensus Manifold Alignment (Right-to-Left O(KD))
-        c = torch.matmul(self.Q.T, flat_v)  # [K']
-        c_min = c.min().item()
-        c_sum = c.sum().item()
-        metrics["c_min"] = c_min
-        metrics["c_sum"] = c_sum
+        # 1. Gate 1: Macro Consensus Manifold Alignment (Unit-Normalized O(KD))
+        norm_v = torch.linalg.vector_norm(flat_v).item()
+        if norm_v < 1e-8:
+            metrics["reason"] = "ZERO_NORM_PASS"
+            return v, metrics
 
-        if c_min < -self.eps_floor or c_sum < self.eps_floor:
+        v_unit = flat_v / norm_v
+        c_hat = torch.matmul(self.Q.T, v_unit)  # [K'], coordinates in [-1, 1]
+        c_hat_min = c_hat.min().item()
+        c_hat_sum = c_hat.sum().item()
+        metrics["c_min"] = c_hat_min
+        metrics["c_sum"] = c_hat_sum
+
+        if c_hat_sum < self.eps_floor or c_hat_min < -self.c_min_floor:
             metrics["action"] = "REJECT"
             metrics["reason"] = "MACRO_MANIFOLD_INVERSION"
             return torch.zeros_like(v), metrics
 
-        # 2. Decompose into manifold and orthogonal residual
+        # 2. Decompose into manifold and orthogonal residual (exact unnormalized coordinates)
+        c = c_hat * norm_v
         v_parallel = torch.matmul(self.Q, c)
         v_perp = flat_v - v_parallel
         norm_perp = torch.linalg.vector_norm(v_perp).item()

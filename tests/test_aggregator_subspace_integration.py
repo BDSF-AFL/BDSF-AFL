@@ -137,22 +137,28 @@ class TestAggregatorSubspaceIntegration(unittest.TestCase):
         K = server.subspace_engine.K
         self.assertEqual(server.subspace_engine.basis_count(), 0)
 
-        # 1. Warmup bootstrapping: submit K clean updates
+        # 1. Warmup Zero-Trojan Invariant: submit K clean updates during warmup
         for i in range(K):
             dW = torch.randn_like(W_init) * 0.05
             sub = UpdateSubmission(client_id=i % 5, delta_W=dW, t_submit=float(i + 1), tau=float(i), model_version_at_pull=0)
             server.handle_update(sub)
 
-        self.assertEqual(server.subspace_engine.basis_count(), K)
-        self.assertTrue(server.subspace_engine.is_basis_full())
+        # Invariant: Q remains unpopulated during warmup to prevent Trojan infiltration
+        self.assertEqual(server.subspace_engine.basis_count(), 0)
+        self.assertFalse(server.subspace_engine.is_basis_full())
 
-        # Advance rounds past warmup (warmup_rounds=5)
+        # 2. Post-warmup: manually or via spatial consensus reference, basis admits verified reference vectors
+        ref = torch.randn_like(W_init)
+        ref = ref / torch.norm(ref)
+        server.subspace_engine.update_basis(ref)
+        self.assertEqual(server.subspace_engine.basis_count(), 1)
+
+        # 3. Downweight check: DOWNWEIGHT action must never admit into Q
         count_before = server.subspace_engine.basis_count()
         dW_downweight = torch.randn_like(W_init) * 0.02
         sub_dw = UpdateSubmission(client_id=0, delta_W=dW_downweight, t_submit=20.0, tau=1.0, model_version_at_pull=server.get_model_version())
         resp_dw = server.handle_update(sub_dw)
 
-        # If it downweights, basis count must remain unchanged
         if resp_dw["status"] == "DOWNWEIGHT":
             self.assertEqual(server.subspace_engine.basis_count(), count_before)
 
