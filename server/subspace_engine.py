@@ -69,6 +69,7 @@ class SubspaceProjectionEngine:
         K: int = 10,
         eps_floor: float = 0.05,
         c_min_floor: float = 0.30,
+        macro_floor: float = 0.25,
         alpha: float = 0.6,
         lam: float = 3.0,
         beta: float = 0.85,
@@ -79,6 +80,7 @@ class SubspaceProjectionEngine:
         self.K = K
         self.eps_floor = eps_floor
         self.c_min_floor = c_min_floor
+        self.macro_floor = macro_floor
         self.alpha = alpha
         self.lam = lam
         self.beta = beta
@@ -89,6 +91,7 @@ class SubspaceProjectionEngine:
         # Rolling consensus history and orthonormal basis
         self._basis_queue: deque[torch.Tensor] = deque(maxlen=self.K)
         self.Q: Optional[torch.Tensor] = None  # [D, K'] where K' <= K
+        self.consensus_dir: Optional[torch.Tensor] = None  # [D], normalized centroid of admitted consensus vectors
 
         # Client directional momentum tracking in Q^perp: cid -> Tensor (on CPU to save VRAM)
         self.m_perp: Dict[int, torch.Tensor] = {}
@@ -133,9 +136,10 @@ class SubspaceProjectionEngine:
         return True
 
     def _recompute_orthonormal_basis(self) -> None:
-        """Recomputes thin orthonormal basis Q via Modified Gram-Schmidt."""
+        """Recomputes thin orthonormal basis Q via Modified Gram-Schmidt and consensus mean direction."""
         if not self._basis_queue:
             self.Q = None
+            self.consensus_dir = None
             return
 
         # Stack into [D, num_vectors] on CPU
@@ -143,7 +147,15 @@ class SubspaceProjectionEngine:
         D, N = R.shape
         target_device = self.Q.device if self.Q is not None else torch.device("cpu")
 
-        # Modified Gram-Schmidt
+        # 1. Consensus mean direction (unorthogonalized normalized centroid of admitted consensus vectors)
+        u_mean = torch.mean(R, dim=1)
+        norm_u = torch.linalg.vector_norm(u_mean).item()
+        if norm_u > 1e-6:
+            self.consensus_dir = (u_mean / norm_u).to(target_device)
+        else:
+            self.consensus_dir = None
+
+        # 2. Modified Gram-Schmidt
         Q_cols = []
         for i in range(N):
             q = R[:, i].clone()
@@ -232,13 +244,25 @@ class SubspaceProjectionEngine:
             return v, metrics
 
         v_unit = flat_v / norm_v
-        c_hat = torch.matmul(self.Q.T, v_unit)  # [K'], coordinates in [-1, 1]
-        c_hat_min = c_hat.min().item()
-        c_hat_sum = c_hat.sum().item()
+
+        # Directional consensus manifold alignment
+        if self.consensus_dir is not None:
+            if self.consensus_dir.device != device:
+                self.consensus_dir = self.consensus_dir.to(device)
+            mu = torch.dot(v_unit, self.consensus_dir).item()
+        else:
+            mu = 1.0
+
+        c_hat = torch.matmul(self.Q.T, v_unit)  # [K'], coordinates
+        c_hat_min = c_hat.min().item() if c_hat.numel() > 0 else 0.0
+        c_hat_sum = c_hat.sum().item() if c_hat.numel() > 0 else 0.0
         metrics["c_min"] = c_hat_min
         metrics["c_sum"] = c_hat_sum
+        metrics["mu"] = mu
 
-        if c_hat_sum < self.eps_floor or c_hat_min < -self.c_min_floor:
+        # Gate 1 check: Macro Manifold Inversion
+        # Rejects if the update actively opposes the consensus manifold learning trajectory
+        if mu < -self.macro_floor:
             metrics["action"] = "REJECT"
             metrics["reason"] = "MACRO_MANIFOLD_INVERSION"
             return torch.zeros_like(v), metrics
@@ -328,6 +352,7 @@ class SubspaceProjectionEngine:
         return {
             "basis_queue": [v.clone().cpu() for v in self._basis_queue],
             "Q": self.Q.clone().cpu() if self.Q is not None else None,
+            "consensus_dir": self.consensus_dir.clone().cpu() if self.consensus_dir is not None else None,
             "m_perp": {cid: m.clone().cpu() for cid, m in self.m_perp.items()},
             "trusted_perp_norms": list(self._trusted_perp_norms),
         }
@@ -337,11 +362,19 @@ class SubspaceProjectionEngine:
         self._basis_queue.clear()
         for v in state.get("basis_queue", []):
             self._basis_queue.append(v.clone().cpu())
+        target_dev = device if device is not None else torch.device("cpu")
         if state.get("Q") is not None:
-            target_dev = device if device is not None else torch.device("cpu")
             self.Q = state["Q"].clone().to(target_dev)
         else:
             self.Q = None
+        if state.get("consensus_dir") is not None:
+            self.consensus_dir = state["consensus_dir"].clone().to(target_dev)
+        elif self._basis_queue:
+            u_mean = torch.mean(torch.stack(list(self._basis_queue), dim=1), dim=1)
+            norm_u = torch.linalg.vector_norm(u_mean).item()
+            self.consensus_dir = (u_mean / norm_u).to(target_dev) if norm_u > 1e-6 else None
+        else:
+            self.consensus_dir = None
         self.m_perp = {int(cid): m.clone().cpu() for cid, m in state.get("m_perp", {}).items()}
         self._trusted_perp_norms = deque(state.get("trusted_perp_norms", []), maxlen=50)
 

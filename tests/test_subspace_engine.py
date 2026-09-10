@@ -181,3 +181,46 @@ def test_staleness_aware_dilation():
     # M_perp(tau=10) = 2.0 * sqrt(1 + 0.1 * 10) = 2.0 * sqrt(2.0) ~ 2.828
     assert pytest.approx(m_tau0["M_perp"], rel=1e-3) == 2.0
     assert pytest.approx(m_tau10["M_perp"], rel=1e-3) == 2.0 * math.sqrt(2.0)
+
+
+def test_gate1_full_basis_honest_non_iid_cascade_free():
+    """Verifies that when basis is full (K=10), honest non-IID clients with class
+    variance are never rejected with MACRO_MANIFOLD_INVERSION, while true inversions are rejected."""
+    d = 10000
+    K = 10
+    engine = SubspaceProjectionEngine(K=K, macro_floor=0.25)
+
+    base = torch.randn(d)
+    base = base / torch.linalg.vector_norm(base)
+
+    # Populate full basis with K=10 consensus vectors
+    for _ in range(K):
+        noise = torch.randn(d)
+        noise = noise - torch.dot(noise, base) * base
+        noise = noise / torch.linalg.vector_norm(noise)
+        vec = 0.85 * base + math.sqrt(1 - 0.85**2) * noise
+        engine.update_basis(vec)
+
+    assert engine.is_basis_full()
+    assert engine.consensus_dir is not None
+
+    # Test 20 honest non-IID clients with varying class alignment
+    for cid in range(20):
+        target_cos = 0.10 + (cid % 10) * 0.05  # Cosines from 0.10 to 0.55
+        noise = torch.randn(d)
+        noise = noise - torch.dot(noise, base) * base
+        noise = noise / torch.linalg.vector_norm(noise)
+        v_honest = (target_cos * base + math.sqrt(1 - target_cos**2) * noise) * 5.0
+
+        v_clean, metrics = engine.filter_update(cid=cid, v=v_honest)
+        assert metrics["action"] == "ACCEPT", f"Client {cid} falsely rejected: {metrics}"
+        assert metrics["reason"] != "MACRO_MANIFOLD_INVERSION"
+        assert metrics["mu"] >= -0.25
+
+    # True macro inversion must still be caught
+    v_inverted = -10.0 * base
+    v_clean_inv, metrics_inv = engine.filter_update(cid=999, v=v_inverted)
+    assert metrics_inv["action"] == "REJECT"
+    assert metrics_inv["reason"] == "MACRO_MANIFOLD_INVERSION"
+    assert torch.all(v_clean_inv == 0)
+

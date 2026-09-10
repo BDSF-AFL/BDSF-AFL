@@ -10,6 +10,7 @@ Verifies:
 
 import os
 import sys
+import math
 import unittest
 import torch
 import numpy as np
@@ -263,6 +264,57 @@ class TestAggregatorSubspaceIntegration(unittest.TestCase):
         self.assertEqual(row[header_map["is_warmup"]], "True")
         # Subspace basis count must be recorded (0 during cold start)
         self.assertEqual(row[header_map["subspace_basis_count"]], "0")
+
+    def test_aggregator_full_basis_non_iid_updates_healthy_acceptance(self):
+        """Verifies that an active server with a full basis (K=5) accepts diverse honest
+        non-IID client updates without triggering a false MACRO_MANIFOLD_INVERSION rejection cascade."""
+        model = MNISTMLP()
+        W_init = torch.cat([p.data.flatten() for p in model.parameters()]).float()
+        logger = BDSFLogger("test_healthy_full_basis", self.config)
+        server = AggregatorServer(self.config, W_init, list(range(5)), logger)
+
+        K = server.subspace_engine.K
+        base = torch.randn_like(W_init)
+        base = base / torch.norm(base)
+
+        # Seed full basis with K consensus directions
+        for _ in range(K):
+            noise = torch.randn_like(W_init)
+            noise = noise - torch.dot(noise, base) * base
+            noise = noise / torch.norm(noise)
+            vec = 0.85 * base + math.sqrt(1 - 0.85**2) * noise
+            server.subspace_engine.update_basis(vec)
+
+        self.assertTrue(server.subspace_engine.is_basis_full())
+        self.assertIsNotNone(server.subspace_engine.consensus_dir)
+
+        # Submit 10 diverse honest non-IID client updates
+        W_before = server.get_global_weights().clone()
+        accept_count = 0
+        for i in range(10):
+            target_cos = 0.15 + (i % 5) * 0.08  # Cosines from 0.15 to 0.47
+            noise = torch.randn_like(W_init)
+            noise = noise - torch.dot(noise, base) * base
+            noise = noise / torch.norm(noise)
+            dW_honest = (target_cos * base + math.sqrt(1 - target_cos**2) * noise) * 0.05
+
+            sub = UpdateSubmission(
+                client_id=i % 5,
+                delta_W=dW_honest,
+                t_submit=float(i + 1),
+                tau=0.0,
+                model_version_at_pull=server.get_model_version(),
+            )
+            resp = server.handle_update(sub)
+            self.assertNotEqual(resp["reason"], "MACRO_MANIFOLD_INVERSION", f"False rejection at update {i}")
+            if resp["status"] in ["ACCEPT", "DOWNWEIGHT"]:
+                accept_count += 1
+
+        # At least one update must have been aggregated, advancing the model weights
+        self.assertGreater(accept_count, 0)
+        self.assertFalse(torch.allclose(server.get_global_weights(), W_before))
+        # Rejection cascade must be 0
+        self.assertEqual(server.consecutive_rejects, 0)
 
 
 if __name__ == "__main__":

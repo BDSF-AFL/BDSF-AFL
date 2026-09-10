@@ -56,6 +56,18 @@ warmup_rounds: 200       # 200 updates (10 rounds across 20 clients) for clean d
 spatial_warmup_rounds: 200 # synchronized with warmup_rounds
 norm_anomaly_threshold: 1.60 # logged diagnostic threshold (not a rejection gate)
 
+# Layer-Stratified Subspace Projection Engine (BDSF-AFL v2)
+enable_subspace: true
+subspace_K: 10
+subspace_macro_floor: 0.25
+subspace_c_min_floor: 0.30
+subspace_eps_floor: 0.05
+subspace_alpha: 0.60
+subspace_lam: 3.0
+subspace_beta: 0.85
+subspace_kappa: 0.10
+subspace_m_perp_base: 2.0
+
 # Trajectory Rigidity & Variance Behavioral Defense
 trs_reject_thresh: 0.85  # TRS >= 0.85 + depth >= 5 -> REJECT + SLASH (proven rigid steering)
 trs_warn_thresh: 0.80    # TRS in (0.70, 0.80] -> DOWNWEIGHT
