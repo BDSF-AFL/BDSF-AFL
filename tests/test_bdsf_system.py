@@ -863,17 +863,21 @@ class TestBDSFSystem(unittest.TestCase):
         I_post, _ = rep.get(0)
         self.assertLess(I_post, 1.0, "Integrity must be slashed post-warmup after streak exceeds grace_k")
 
-    def test_csv_schema_27_columns(self):
-        """Verifies that BDSFLogger writes exactly the 27 expected columns."""
+    def test_csv_schema_44_columns(self):
+        """Verifies that BDSFLogger writes exactly the 44 expected columns for the modern architecture."""
         log_dir = "logs/test_suite_tmp/"
-        logger = BDSFLogger("test_schema_27", {"log_dir": log_dir})
+        logger = BDSFLogger("test_schema_44", {"log_dir": log_dir})
         logger.log_update(
-            round=1, client_id=0, status="ACCEPT", reason="FULL_CONSENSUS_ACCEPT", weight=1.0,
+            round=1, client_id=0, is_byzantine=False, status="ACCEPT", reason="FULL_CONSENSUS_ACCEPT",
+            weight=1.0, priority=2, is_warmup=False,
             I_i=1.0, P_i=1.0, g_i=1.5, version_lag=0, lower_fence=0.5, upper_fence=2.5, fence_margin=0.0,
-            temporal_mature=True, sim_global=0.85, norm_raw=1.2, norm_ratio_median=1.05,
-            spatial_coherence=0.90, spatial_mature=True, sim_self_max=0.92, sim_anchor=0.88,
-            behavioral_mature=True, prc_score=0.65, tra_score=0.80, suspicion_score=0.0,
-            gdv_score=0.15, dbp_score=0.75, trs_score=0.64
+            temporal_mature=True, sim_global=0.85, norm_raw=1.2, norm_clipped=1.1, norm_ratio_median=1.05,
+            dynamic_bound_C=2.0, spatial_coherence=0.90, spatial_mature=True, sim_self_max=0.92, sim_anchor=0.88,
+            sim_frozen_anchor=0.85, anchor_drift=0.03, history_depth=5, behavioral_mature=True,
+            prc_score=0.65, tra_score=0.80, suspicion_score=0.0, gdv_score=0.15, dbp_score=0.75, trs_score=0.64,
+            subspace_c_min=0.12, subspace_c_sum=0.45, subspace_norm_perp=1.05, subspace_M_perp=2.10,
+            subspace_w_damp=0.98, subspace_w_temporal=1.0, subspace_rho=0.02, subspace_basis_count=10,
+            v_momentum_norm=0.15,
         )
 
         with open(logger.csv_path, "r") as f:
@@ -881,11 +885,28 @@ class TestBDSFSystem(unittest.TestCase):
             header = reader[0]
             row = reader[1]
 
-        self.assertEqual(len(header), 27)
-        self.assertEqual(len(row), 27)
+        self.assertEqual(len(header), 44)
+        self.assertEqual(len(row), 44)
+        self.assertIn("is_byzantine", header)
+        self.assertIn("priority", header)
+        self.assertIn("is_warmup", header)
+        self.assertIn("norm_clipped", header)
+        self.assertIn("dynamic_bound_C", header)
+        self.assertIn("sim_frozen_anchor", header)
+        self.assertIn("anchor_drift", header)
+        self.assertIn("history_depth", header)
         self.assertIn("gdv_score", header)
         self.assertIn("dbp_score", header)
         self.assertIn("trs_score", header)
+        self.assertIn("subspace_c_min", header)
+        self.assertIn("subspace_c_sum", header)
+        self.assertIn("subspace_norm_perp", header)
+        self.assertIn("subspace_M_perp", header)
+        self.assertIn("subspace_w_damp", header)
+        self.assertIn("subspace_w_temporal", header)
+        self.assertIn("subspace_rho", header)
+        self.assertIn("subspace_basis_count", header)
+        self.assertIn("v_momentum_norm", header)
         if os.path.exists(logger.csv_path):
             os.remove(logger.csv_path)
 

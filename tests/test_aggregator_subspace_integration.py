@@ -233,6 +233,37 @@ class TestAggregatorSubspaceIntegration(unittest.TestCase):
         self.assertEqual(resp1["reason"], resp2["reason"])
         self.assertTrue(torch.allclose(server1.get_global_weights(), server2.get_global_weights()))
 
+    def test_aggregator_csv_logger_records_full_modern_columns(self):
+        """Verifies that live handle_update calls write all 44 columns to CSV with non-null modern architecture fields."""
+        import csv
+        model = MNISTMLP()
+        W_init = torch.cat([p.data.flatten() for p in model.parameters()]).float()
+        logger = BDSFLogger("test_live_csv_cols", self.config)
+        server = AggregatorServer(self.config, W_init, list(range(5)), logger)
+        server.register_client_ground_truth(1, is_byzantine=True)
+
+        # Send an update
+        dW = torch.randn_like(W_init) * 0.05
+        sub = UpdateSubmission(client_id=1, delta_W=dW, t_submit=1.0, tau=0.0, model_version_at_pull=0)
+        server.handle_update(sub)
+
+        with open(logger.csv_path, "r", encoding="utf-8") as f:
+            reader = list(csv.reader(f))
+            header = reader[0]
+            row = reader[1]
+
+        self.assertEqual(len(header), 44)
+        self.assertEqual(len(row), 44)
+        header_map = {name: idx for idx, name in enumerate(header)}
+        
+        # Ground truth label must be True for client 1
+        self.assertEqual(row[header_map["is_byzantine"]], "True")
+        # Status & Reason
+        self.assertEqual(row[header_map["status"]], "ACCEPT")
+        self.assertEqual(row[header_map["is_warmup"]], "True")
+        # Subspace basis count must be recorded (0 during cold start)
+        self.assertEqual(row[header_map["subspace_basis_count"]], "0")
+
 
 if __name__ == "__main__":
     unittest.main()

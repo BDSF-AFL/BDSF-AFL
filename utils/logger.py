@@ -1,13 +1,85 @@
 import os
 import csv
 from typing import List, Dict, Any, Optional
+import numpy as np
+
+# Canonical 44-column CSV Logging Schema for BDSF-AFL v2 Architecture
+BDSF_UPDATE_HEADERS: List[str] = [
+    # Core update metadata & ground truth
+    "round",
+    "client_id",
+    "is_byzantine",
+    "status",
+    "reason",
+    "weight",
+    "priority",
+    "is_warmup",
+
+    # Pillar 2: Reputation
+    "I_i",
+    "P_i",
+
+    # Pillar 1: Temporal Cadence & Delay
+    "g_i",
+    "version_lag",
+    "lower_fence",
+    "upper_fence",
+    "fence_margin",
+    "temporal_mature",
+
+    # Pillar 3: Spatial Reference & Adaptive Norms
+    "sim_global",
+    "norm_raw",
+    "norm_clipped",
+    "norm_ratio_median",
+    "dynamic_bound_C",
+    "spatial_coherence",
+    "spatial_mature",
+
+    # Pillar 4: Dual-Anchor & Behavioral Memory
+    "sim_self_max",
+    "sim_anchor",
+    "sim_frozen_anchor",
+    "anchor_drift",
+    "history_depth",
+    "behavioral_mature",
+
+    # Pillar 5: Residual Coherence, Rigidity & Suspicion
+    "prc_score",
+    "tra_score",
+    "suspicion_score",
+    "gdv_score",
+    "dbp_score",
+    "trs_score",
+
+    # Subspace Projection Engine (BDSF-AFL v2 / Gates 1, 1b, 2)
+    "subspace_c_min",
+    "subspace_c_sum",
+    "subspace_norm_perp",
+    "subspace_M_perp",
+    "subspace_w_damp",
+    "subspace_w_temporal",
+    "subspace_rho",
+    "subspace_basis_count",
+
+    # Server Velocity
+    "v_momentum_norm",
+]
+
 
 class BDSFLogger:
+    """Comprehensive structured logger for BDSF-AFL experiments.
+    
+    Maintains in-memory diagnostic logs and appends structured rows to a canonical
+    per-run CSV file following the full 44-column modern architecture schema.
+    """
+
     def __init__(self, run_id: str, config: dict):
         self.run_id = run_id
         self._rejection_log: List[Dict[str, Any]] = []
         self._reputation_log: List[Dict[str, Any]] = []
         self._metric_log: List[Dict[str, Any]] = []
+        self.headers = list(BDSF_UPDATE_HEADERS)
         
         # Get log directory and ensure it exists
         self.log_dir = config.get("log_dir", "logs/")
@@ -15,15 +87,6 @@ class BDSFLogger:
         
         # Setup CSV file for updates
         self.csv_path = os.path.join(self.log_dir, f"{run_id}_updates.csv")
-        headers = [
-            "round", "client_id", "status", "reason", "weight",
-            "I_i", "P_i",
-            "g_i", "version_lag", "lower_fence", "upper_fence", "fence_margin", "temporal_mature",
-            "sim_global", "norm_raw", "norm_ratio_median", "spatial_coherence", "spatial_mature",
-            "sim_self_max", "sim_anchor", "behavioral_mature",
-            "prc_score", "tra_score", "suspicion_score",
-            "gdv_score", "dbp_score", "trs_score"
-        ]
         
         is_resume = config.get("resume", False) and os.path.exists(self.csv_path)
         resume_round = config.get("resume_round", None)
@@ -50,15 +113,30 @@ class BDSFLogger:
             
             with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(headers)
+                writer.writerow(self.headers)
                 for r in clean_rows:
                     writer.writerow(r)
                 f.flush()
         else:
             with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(headers)
+                writer.writerow(self.headers)
                 f.flush()
+
+    @staticmethod
+    def _format_cell(val: Any) -> str:
+        """Formats primitive, numeric, and boolean values for consistent CSV serialization."""
+        if val is None:
+            return ""
+        if isinstance(val, bool):
+            return str(val)
+        if isinstance(val, (int, np.integer)):
+            return str(val)
+        if isinstance(val, (float, np.floating)):
+            if np.isnan(val) or np.isinf(val):
+                return ""
+            return f"{val:.6f}"
+        return str(val)
 
     def log_update(
         self,
@@ -67,7 +145,10 @@ class BDSFLogger:
         client_id: int,
         status: str,
         reason: str,
+        is_byzantine: Optional[bool] = None,
         weight: Optional[float] = None,
+        priority: Optional[int] = None,
+        is_warmup: Optional[bool] = None,
         I_i: Optional[float] = None,
         P_i: Optional[float] = None,
         g_i: Optional[float] = None,
@@ -78,11 +159,16 @@ class BDSFLogger:
         temporal_mature: Optional[bool] = None,
         sim_global: Optional[float] = None,
         norm_raw: Optional[float] = None,
+        norm_clipped: Optional[float] = None,
         norm_ratio_median: Optional[float] = None,
+        dynamic_bound_C: Optional[float] = None,
         spatial_coherence: Optional[float] = None,
         spatial_mature: Optional[bool] = None,
         sim_self_max: Optional[float] = None,
         sim_anchor: Optional[float] = None,
+        sim_frozen_anchor: Optional[float] = None,
+        anchor_drift: Optional[float] = None,
+        history_depth: Optional[int] = None,
         behavioral_mature: Optional[bool] = None,
         prc_score: Optional[float] = None,
         tra_score: Optional[float] = None,
@@ -90,15 +176,31 @@ class BDSFLogger:
         gdv_score: Optional[float] = None,
         dbp_score: Optional[float] = None,
         trs_score: Optional[float] = None,
+        subspace_c_min: Optional[float] = None,
+        subspace_c_sum: Optional[float] = None,
+        subspace_norm_perp: Optional[float] = None,
+        subspace_M_perp: Optional[float] = None,
+        subspace_w_damp: Optional[float] = None,
+        subspace_w_temporal: Optional[float] = None,
+        subspace_rho: Optional[float] = None,
+        subspace_basis_count: Optional[int] = None,
+        v_momentum_norm: Optional[float] = None,
         **kwargs
     ) -> None:
-        """Log update status and metadata. Appends to list and CSV."""
-        entry = {
+        """Log client update status and diagnostic metadata across all architecture pillars.
+        
+        Appends a structured dictionary entry to the in-memory rejection log and writes
+        a formatted row to the run CSV file.
+        """
+        entry: Dict[str, Any] = {
             "round": round,
             "client_id": client_id,
+            "is_byzantine": is_byzantine,
             "status": status,
             "reason": reason,
             "weight": weight,
+            "priority": priority,
+            "is_warmup": is_warmup,
             "I_i": I_i,
             "P_i": P_i,
             "g_i": g_i,
@@ -109,11 +211,16 @@ class BDSFLogger:
             "temporal_mature": temporal_mature,
             "sim_global": sim_global,
             "norm_raw": norm_raw,
+            "norm_clipped": norm_clipped,
             "norm_ratio_median": norm_ratio_median,
+            "dynamic_bound_C": dynamic_bound_C,
             "spatial_coherence": spatial_coherence,
             "spatial_mature": spatial_mature,
             "sim_self_max": sim_self_max,
             "sim_anchor": sim_anchor,
+            "sim_frozen_anchor": sim_frozen_anchor,
+            "anchor_drift": anchor_drift,
+            "history_depth": history_depth,
             "behavioral_mature": behavioral_mature,
             "prc_score": prc_score,
             "tra_score": tra_score,
@@ -121,45 +228,28 @@ class BDSFLogger:
             "gdv_score": gdv_score,
             "dbp_score": dbp_score,
             "trs_score": trs_score,
+            "subspace_c_min": subspace_c_min,
+            "subspace_c_sum": subspace_c_sum,
+            "subspace_norm_perp": subspace_norm_perp,
+            "subspace_M_perp": subspace_M_perp,
+            "subspace_w_damp": subspace_w_damp,
+            "subspace_w_temporal": subspace_w_temporal,
+            "subspace_rho": subspace_rho,
+            "subspace_basis_count": subspace_basis_count,
+            "v_momentum_norm": v_momentum_norm,
         }
+        # Absorb any remaining kwargs matching valid headers
+        for k, v in kwargs.items():
+            if k in self.headers and entry.get(k) is None:
+                entry[k] = v
+
         self._rejection_log.append(entry)
-        
-        # Format values for CSV
-        w_val = f"{weight:.6f}" if weight is not None else ""
-        I_val = f"{I_i:.6f}" if I_i is not None else ""
-        P_val = f"{P_i:.6f}" if P_i is not None else ""
-        g_val = f"{g_i:.6f}" if g_i is not None else ""
-        vlag_val = str(version_lag) if version_lag is not None else ""
-        lf_val = f"{lower_fence:.6f}" if lower_fence is not None else ""
-        uf_val = f"{upper_fence:.6f}" if upper_fence is not None else ""
-        fm_val = f"{fence_margin:.6f}" if fence_margin is not None else ""
-        tm_m_val = str(temporal_mature) if temporal_mature is not None else ""
-        sim_g_val = f"{sim_global:.6f}" if sim_global is not None else ""
-        nr_val = f"{norm_raw:.6f}" if norm_raw is not None else ""
-        nrm_val = f"{norm_ratio_median:.6f}" if norm_ratio_median is not None else ""
-        sc_val = f"{spatial_coherence:.6f}" if spatial_coherence is not None else ""
-        sp_m_val = str(spatial_mature) if spatial_mature is not None else ""
-        ss_max_val = f"{sim_self_max:.6f}" if sim_self_max is not None else ""
-        sa_val = f"{sim_anchor:.6f}" if sim_anchor is not None else ""
-        bm_m_val = str(behavioral_mature) if behavioral_mature is not None else ""
-        prc_val = f"{prc_score:.6f}" if prc_score is not None else ""
-        tra_val = f"{tra_score:.6f}" if tra_score is not None else ""
-        susp_val = f"{suspicion_score:.6f}" if suspicion_score is not None else ""
-        gdv_val = f"{gdv_score:.6f}" if gdv_score is not None else ""
-        dbp_val = f"{dbp_score:.6f}" if dbp_score is not None else ""
-        trs_val = f"{trs_score:.6f}" if trs_score is not None else ""
-        
+
+        # Write to disk
+        row = [self._format_cell(entry.get(h)) for h in self.headers]
         with open(self.csv_path, mode='a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow([
-                round, client_id, status, reason, w_val,
-                I_val, P_val,
-                g_val, vlag_val, lf_val, uf_val, fm_val, tm_m_val,
-                sim_g_val, nr_val, nrm_val, sc_val, sp_m_val,
-                ss_max_val, sa_val, bm_m_val,
-                prc_val, tra_val, susp_val,
-                gdv_val, dbp_val, trs_val
-            ])
+            writer.writerow(row)
             f.flush()
 
     def log_reputation(self, *, round: int, client_id: int, I_i: float, P_i: float, is_byzantine: bool) -> None:
@@ -193,15 +283,7 @@ class BDSFLogger:
         """Truncates the CSV log to retain only rows recorded strictly before resume_update, eliminating duplicates on resume."""
         if not os.path.exists(self.csv_path):
             return
-        headers = [
-            "round", "client_id", "status", "reason", "weight",
-            "I_i", "P_i",
-            "g_i", "version_lag", "lower_fence", "upper_fence", "fence_margin", "temporal_mature",
-            "sim_global", "norm_raw", "norm_ratio_median", "spatial_coherence", "spatial_mature",
-            "sim_self_max", "sim_anchor", "behavioral_mature",
-            "prc_score", "tra_score", "suspicion_score",
-            "gdv_score", "dbp_score", "trs_score"
-        ]
+
         clean_rows = []
         try:
             with open(self.csv_path, mode='r', newline='', encoding='utf-8') as f:
@@ -220,7 +302,7 @@ class BDSFLogger:
 
         with open(self.csv_path, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(headers)
+            writer.writerow(self.headers)
             for r in clean_rows:
                 writer.writerow(r)
             f.flush()

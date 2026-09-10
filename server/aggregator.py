@@ -391,7 +391,15 @@ class AggregatorServer:
                 self._log_update(
                     round=self.round_number, client_id=cid,
                     status="REJECT", reason=sub_metrics["reason"], weight=None,
+                    priority=1, is_warmup=False,
                     I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
+                    subspace_c_min=sub_metrics.get("c_min"),
+                    subspace_c_sum=sub_metrics.get("c_sum"),
+                    subspace_norm_perp=sub_metrics.get("norm_perp"),
+                    subspace_M_perp=sub_metrics.get("M_perp"),
+                    subspace_w_damp=sub_metrics.get("w_damp"),
+                    subspace_w_temporal=sub_metrics.get("w_temporal"),
+                    subspace_rho=sub_metrics.get("rho"),
                 )
                 self.consecutive_rejects += 1
                 return {
@@ -414,6 +422,43 @@ class AggregatorServer:
             g_i=g_i,
             client_gap_history=client_gaps,
         )
+
+        # Pre-package structured evidence and subspace payloads for logging
+        sub_log = {
+            "subspace_c_min": sub_metrics.get("c_min"),
+            "subspace_c_sum": sub_metrics.get("c_sum"),
+            "subspace_norm_perp": sub_metrics.get("norm_perp"),
+            "subspace_M_perp": sub_metrics.get("M_perp"),
+            "subspace_w_damp": sub_metrics.get("w_damp"),
+            "subspace_w_temporal": sub_metrics.get("w_temporal"),
+            "subspace_rho": sub_metrics.get("rho"),
+        } if sub_metrics is not None else {}
+
+        ev_log = {
+            "lower_fence": temporal_evidence.lower_fence,
+            "upper_fence": temporal_evidence.upper_fence,
+            "fence_margin": temporal_evidence.fence_margin,
+            "temporal_mature": temporal_evidence.temporal_mature,
+            "sim_global": spatial_evidence.sim_global,
+            "norm_raw": spatial_evidence.norm_raw,
+            "norm_clipped": spatial_evidence.norm_clipped,
+            "norm_ratio_median": spatial_evidence.norm_ratio_median,
+            "dynamic_bound_C": spatial_evidence.dynamic_bound_C,
+            "spatial_coherence": spatial_evidence.spatial_coherence,
+            "spatial_mature": spatial_evidence.spatial_mature,
+            "sim_self_max": behavioral_evidence.sim_self_max,
+            "sim_anchor": behavioral_evidence.sim_anchor,
+            "sim_frozen_anchor": behavioral_evidence.sim_frozen_anchor,
+            "anchor_drift": behavioral_evidence.anchor_drift,
+            "history_depth": behavioral_evidence.history_depth,
+            "behavioral_mature": behavioral_evidence.behavioral_mature,
+            "prc_score": spatial_evidence.prc_score,
+            "tra_score": spatial_evidence.tra_score,
+            "suspicion_score": spatial_evidence.suspicion_score,
+            "gdv_score": behavioral_evidence.gdv_score,
+            "dbp_score": behavioral_evidence.dbp_score,
+            "trs_score": behavioral_evidence.trs_score,
+        }
 
         # --------------------------------------------------------------
         # PHASE 3: JOINT DECISION PIPELINE (when decision_mode == "joint")
@@ -499,6 +544,10 @@ class AggregatorServer:
                             status="ACCEPT", reason="QUARANTINE_RELEASE_ACCEPT",
                             version_lag=max(0, self.round_number - q_entry.entry_round),
                             weight=q_w,
+                            priority=3,
+                            is_warmup=False,
+                            I_i=q_entry.reputation_at_entry[0],
+                            P_i=q_entry.reputation_at_entry[1],
                         )
                     elif q_act == "REJECT":
                         self._log_update(
@@ -506,30 +555,20 @@ class AggregatorServer:
                             status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
                             version_lag=max(0, self.round_number - q_entry.entry_round),
                             weight=None,
+                            priority=5,
+                            is_warmup=False,
+                            I_i=q_entry.reputation_at_entry[0],
+                            P_i=q_entry.reputation_at_entry[1],
                         )
 
                 self._log_update(
                     round=self.round_number, client_id=cid,
                     status="ACCEPT", reason=outcome.primary_reason, weight=weight,
+                    priority=outcome.diagnostic_features.get("priority", 0 if is_warmup else 2),
+                    is_warmup=is_warmup,
                     I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
-                    lower_fence=temporal_evidence.lower_fence,
-                    upper_fence=temporal_evidence.upper_fence,
-                    fence_margin=temporal_evidence.fence_margin,
-                    temporal_mature=temporal_evidence.temporal_mature,
-                    sim_global=spatial_evidence.sim_global,
-                    norm_raw=spatial_evidence.norm_raw,
-                    norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
-                    spatial_mature=spatial_evidence.spatial_mature,
-                    sim_self_max=behavioral_evidence.sim_self_max,
-                    sim_anchor=behavioral_evidence.sim_anchor,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    prc_score=spatial_evidence.prc_score,
-                    tra_score=spatial_evidence.tra_score,
-                    suspicion_score=spatial_evidence.suspicion_score,
-                    gdv_score=behavioral_evidence.gdv_score,
-                    dbp_score=behavioral_evidence.dbp_score,
-                    trs_score=behavioral_evidence.trs_score,
+                    **ev_log,
+                    **sub_log,
                 )
                 ret_val = {
                     "status": "ACCEPT",
@@ -569,25 +608,11 @@ class AggregatorServer:
                 self._log_update(
                     round=self.round_number, client_id=cid,
                     status="DOWNWEIGHT", reason=outcome.primary_reason, weight=weight,
+                    priority=outcome.diagnostic_features.get("priority", 4),
+                    is_warmup=False,
                     I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
-                    lower_fence=temporal_evidence.lower_fence,
-                    upper_fence=temporal_evidence.upper_fence,
-                    fence_margin=temporal_evidence.fence_margin,
-                    temporal_mature=temporal_evidence.temporal_mature,
-                    sim_global=spatial_evidence.sim_global,
-                    norm_raw=spatial_evidence.norm_raw,
-                    norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
-                    spatial_mature=spatial_evidence.spatial_mature,
-                    sim_self_max=behavioral_evidence.sim_self_max,
-                    sim_anchor=behavioral_evidence.sim_anchor,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    prc_score=spatial_evidence.prc_score,
-                    tra_score=spatial_evidence.tra_score,
-                    suspicion_score=spatial_evidence.suspicion_score,
-                    gdv_score=behavioral_evidence.gdv_score,
-                    dbp_score=behavioral_evidence.dbp_score,
-                    trs_score=behavioral_evidence.trs_score,
+                    **ev_log,
+                    **sub_log,
                 )
                 ret_val = {
                     "status": "DOWNWEIGHT",
@@ -617,25 +642,11 @@ class AggregatorServer:
                 self._log_update(
                     round=self.round_number, client_id=cid,
                     status="QUARANTINE", reason=outcome.primary_reason, weight=0.0,
+                    priority=outcome.diagnostic_features.get("priority", 3),
+                    is_warmup=False,
                     I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
-                    lower_fence=temporal_evidence.lower_fence,
-                    upper_fence=temporal_evidence.upper_fence,
-                    fence_margin=temporal_evidence.fence_margin,
-                    temporal_mature=temporal_evidence.temporal_mature,
-                    sim_global=spatial_evidence.sim_global,
-                    norm_raw=spatial_evidence.norm_raw,
-                    norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
-                    spatial_mature=spatial_evidence.spatial_mature,
-                    sim_self_max=behavioral_evidence.sim_self_max,
-                    sim_anchor=behavioral_evidence.sim_anchor,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    prc_score=spatial_evidence.prc_score,
-                    tra_score=spatial_evidence.tra_score,
-                    suspicion_score=spatial_evidence.suspicion_score,
-                    gdv_score=behavioral_evidence.gdv_score,
-                    dbp_score=behavioral_evidence.dbp_score,
-                    trs_score=behavioral_evidence.trs_score,
+                    **ev_log,
+                    **sub_log,
                 )
                 return {
                     "status": "QUARANTINE",
@@ -668,25 +679,11 @@ class AggregatorServer:
                 self._log_update(
                     round=self.round_number, client_id=cid,
                     status="REJECT", reason=outcome.primary_reason, weight=None,
+                    priority=outcome.diagnostic_features.get("priority", 5),
+                    is_warmup=False,
                     I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
-                    lower_fence=temporal_evidence.lower_fence,
-                    upper_fence=temporal_evidence.upper_fence,
-                    fence_margin=temporal_evidence.fence_margin,
-                    temporal_mature=temporal_evidence.temporal_mature,
-                    sim_global=spatial_evidence.sim_global,
-                    norm_raw=spatial_evidence.norm_raw,
-                    norm_ratio_median=spatial_evidence.norm_ratio_median,
-                    spatial_coherence=spatial_evidence.spatial_coherence,
-                    spatial_mature=spatial_evidence.spatial_mature,
-                    sim_self_max=behavioral_evidence.sim_self_max,
-                    sim_anchor=behavioral_evidence.sim_anchor,
-                    behavioral_mature=behavioral_evidence.behavioral_mature,
-                    prc_score=spatial_evidence.prc_score,
-                    tra_score=spatial_evidence.tra_score,
-                    suspicion_score=spatial_evidence.suspicion_score,
-                    gdv_score=behavioral_evidence.gdv_score,
-                    dbp_score=behavioral_evidence.dbp_score,
-                    trs_score=behavioral_evidence.trs_score,
+                    **ev_log,
+                    **sub_log,
                 )
                 self.consecutive_rejects += 1
                 if self.consecutive_rejects >= self.deadlock_threshold:
@@ -990,8 +987,13 @@ class AggregatorServer:
         return 0.0
 
     def _log_update(self, **kwargs):
+        cid = kwargs.get("client_id")
+        if "is_byzantine" not in kwargs and cid is not None and cid in self.registry:
+            kwargs["is_byzantine"] = self.registry[cid].is_byzantine
         if "v_momentum_norm" not in kwargs:
             kwargs["v_momentum_norm"] = self.get_momentum_norm()
+        if "subspace_basis_count" not in kwargs and self.enable_subspace and self.subspace_engine is not None:
+            kwargs["subspace_basis_count"] = self.subspace_engine.basis_count()
         self.logger.log_update(**kwargs)
 
     def get_state(self) -> dict:
