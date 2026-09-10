@@ -180,7 +180,7 @@ class SimulationEnvironment:
         dataloaders, test_loader = partitioner.get_dataloaders()
         
         # 3. Byzantine identification
-        byz_fraction = self.config.get("byzantine_fraction", 0.0)
+        byz_fraction = float(self.config.get("byz_fraction", self.config.get("byzantine_fraction", 0.0)))
         num_byz = int(self.N * byz_fraction)
         byz_ids = set(range(num_byz))
         honest_ids = set(range(num_byz, self.N))

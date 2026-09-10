@@ -105,6 +105,7 @@ def run_benchmark_trial(
     exp_cfg = configure_algorithm(config, algo_name)
     exp_cfg["attack_type"] = attack_type
     exp_cfg["byz_fraction"] = byz_fraction
+    exp_cfg["byzantine_fraction"] = byz_fraction
     exp_cfg["log_dir"] = log_dir
 
     if alpha_val == "iid" or alpha_val is None:
