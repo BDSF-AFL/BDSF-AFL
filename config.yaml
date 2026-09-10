@@ -52,8 +52,8 @@ gamma_clip: 1.10             # strictly clips excess orthogonal perturbation ene
 top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true  # dynamic adaptive norm clipping
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
-warmup_rounds: 300       # 300 updates (15 rounds across 20 clients) for clean dossier construction
-spatial_warmup_rounds: 300 # synchronized with warmup_rounds
+warmup_rounds: 200       # 200 updates (10 rounds across 20 clients) for clean dossier construction
+spatial_warmup_rounds: 200 # synchronized with warmup_rounds
 norm_anomaly_threshold: 1.60 # logged diagnostic threshold (not a rejection gate)
 
 # Trajectory Rigidity & Variance Behavioral Defense
@@ -86,7 +86,7 @@ borderline_limit: 5
 # Joint Decision Engine & Multi-Action Filtering (Phase 3)
 decision_mode: "joint"            # "joint" | "legacy"
 warm_start_mode: "state_maturity" # "state_maturity" (Adaptive) | "fixed" (Legacy 80)
-temporal_min_samples: 300         # 300 gap observations for mature empirical Tukey fences
+temporal_min_samples: 200         # 200 gap observations for mature empirical Tukey fences
 behavioral_min_depth: 3           # Trajectory history depth for behavioral maturity
 warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
 alpha_downweight: 0.35            # Base weight attenuation for non-IID updates

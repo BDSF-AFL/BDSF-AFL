@@ -34,9 +34,9 @@ experiment:
   suspicion_step: 0.15
   suspicion_reject_thresh: 0.65
   static_clip_C: 10.0
-  warmup_rounds: 15
-  spatial_warmup_rounds: 15
-  temporal_min_samples: 300
+  warmup_rounds: 200        # 200 updates (10 rounds across 20 clients)
+  spatial_warmup_rounds: 200 # synchronized with warmup_rounds
+  temporal_min_samples: 200  # 200 gap observations for mature empirical Tukey fences
   norm_anomaly_threshold: 1.60
   trs_reject_thresh: 0.85
   trs_warn_thresh: 0.80
