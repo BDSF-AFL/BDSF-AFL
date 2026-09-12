@@ -24,7 +24,7 @@ class ClientBehavioralProfile:
         self.early_vectors: List[torch.Tensor] = []
         self.consecutive_downweights: int = 0
 
-    def append(self, delta_W: torch.Tensor, norm_val: float, is_downweight: bool = False) -> None:
+    def append(self, delta_W: torch.Tensor, norm_val: float, is_downweight: bool = False, anchor_update_allowed: bool = True) -> None:
         """Stores unit-normalized float16 1D vector on CPU and its norm.
         Guarantees no GPU tensors or computation graphs are retained.
         """
@@ -48,14 +48,19 @@ class ClientBehavioralProfile:
         self.norm_history.append(float(norm_val))
         self.total_accepted += 1
 
-        if is_downweight:
+        if anchor_update_allowed:
+            if is_downweight:
+                self.consecutive_downweights += 1
+                # Adaptive anchor tracking on verified self-consistent non-IID downweight to prevent anchor starvation
+                if sim_self >= 0.30:
+                    self._update_anchor(unit_vec, lambda_anchor=0.10)
+            else:
+                self.consecutive_downweights = 0
+                self._update_anchor(unit_vec, lambda_anchor=0.15)
+        elif is_downweight:
             self.consecutive_downweights += 1
-            # Adaptive anchor tracking on verified self-consistent non-IID downweight to prevent anchor starvation
-            if sim_self >= 0.30:
-                self._update_anchor(unit_vec, lambda_anchor=0.10)
         else:
             self.consecutive_downweights = 0
-            self._update_anchor(unit_vec, lambda_anchor=0.15)
 
     def _update_anchor(self, unit_vec: torch.Tensor, lambda_anchor: float = 0.15) -> None:
         """Initializes or slowly updates the long-term Genesis Anchor while guarding against adversarial drift."""
@@ -329,7 +334,8 @@ class BehavioralMemoryManager:
         client_id: int,
         delta_W: torch.Tensor,
         norm_val: Optional[float] = None,
-        is_downweight: bool = False
+        is_downweight: bool = False,
+        is_warmup: bool = False,
     ) -> None:
         """Updates per-client behavioral memory strictly after an update is accepted.
         Guarantees only legitimate, accepted updates enter historical memory.
@@ -337,7 +343,18 @@ class BehavioralMemoryManager:
         profile = self.get_or_create_profile(client_id)
         if norm_val is None:
             norm_val = torch.norm(delta_W.detach().cpu().flatten().float()).item()
-        profile.append(delta_W, norm_val, is_downweight=is_downweight)
+        profile.append(delta_W, norm_val, is_downweight=is_downweight, anchor_update_allowed=not is_warmup)
+
+    def seed_anchors_from_consensus(self, ref_delta_W: torch.Tensor) -> None:
+        """Initializes Genesis Anchors across all client profiles using the server's verified consensus reference."""
+        vec = ref_delta_W.detach().cpu().flatten().float()
+        norm = torch.norm(vec).item()
+        if norm > 1e-9:
+            unit_ref = (vec / norm).half()
+            for profile in self.profiles.values():
+                profile.genesis_anchor = unit_ref.clone()
+                profile.frozen_genesis_anchor = unit_ref.clone()
+                profile.early_vectors.clear()
 
     def get_state(self) -> dict:
         """Serializes full behavioral memory manager state for checkpointing."""

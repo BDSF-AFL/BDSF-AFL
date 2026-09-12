@@ -394,6 +394,8 @@ class AggregatorServer:
                     status="REJECT", reason=sub_metrics["reason"], weight=None,
                     priority=1, is_warmup=False,
                     I_i=I_i, P_i=P_i, g_i=g_i, version_lag=version_lag,
+                    subspace_mu=sub_metrics.get("mu"),
+                    subspace_rho_parallel=sub_metrics.get("rho_parallel"),
                     subspace_c_min=sub_metrics.get("c_min"),
                     subspace_c_sum=sub_metrics.get("c_sum"),
                     subspace_norm_perp=sub_metrics.get("norm_perp"),
@@ -426,6 +428,8 @@ class AggregatorServer:
 
         # Pre-package structured evidence and subspace payloads for logging
         sub_log = {
+            "subspace_mu": sub_metrics.get("mu"),
+            "subspace_rho_parallel": sub_metrics.get("rho_parallel"),
             "subspace_c_min": sub_metrics.get("c_min"),
             "subspace_c_sum": sub_metrics.get("c_sum"),
             "subspace_norm_perp": sub_metrics.get("norm_perp"),
@@ -473,6 +477,8 @@ class AggregatorServer:
                 I_i=I_i,
                 P_i=P_i,
                 current_round=self.round_number,
+                subspace_mu=sub_log.get("subspace_mu"),
+                subspace_rho_parallel=sub_log.get("subspace_rho_parallel"),
             )
 
             delta_W_clipped = self.spatial_validator.adaptive_clip(submission.delta_W)
@@ -506,8 +512,17 @@ class AggregatorServer:
                     if ref is not None:
                         self.subspace_engine.update_basis(ref)
 
-                # Warmup updates build the client's historical trajectory & genesis anchor
-                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False)
+                # Genesis Anchor Seeding Policy:
+                # Seed Genesis Anchors strictly from the server's clean consensus reference at the end of warmup,
+                # preventing client self-poisoning during warmup.
+                if not is_warmup and not getattr(self, "_anchors_seeded", False):
+                    ref = self.spatial_validator._build_reference()
+                    if ref is not None:
+                        self.behavioral_memory.seed_anchors_from_consensus(ref)
+                        self._anchors_seeded = True
+
+                # Warmup updates build the client's historical trajectory while skipping anchor updates
+                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=False, is_warmup=is_warmup)
                 if not is_warmup:
                     self.rep_manager.record_accepted_update(cid)
                     self.rep_manager.recover(cid)
@@ -537,6 +552,7 @@ class AggregatorServer:
                             client_id=q_entry.client_id,
                             delta_W=q_entry.delta_W_clipped,
                             is_downweight=False,
+                            is_warmup=False,
                         )
                         self.rep_manager.record_accepted_update(q_entry.client_id)
                         self.rep_manager.recover(q_entry.client_id)
@@ -598,7 +614,7 @@ class AggregatorServer:
                 self.accepted_buffer.append(entry)
                 self.spatial_validator.on_accept(entry)
                 self.spatial_validator.record_residual(cid, delta_W_clipped)
-                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True)
+                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True, is_warmup=False)
                 self.temporal_filter.record_gap(g_i, cid)
 
                 # Neutral Hold: Reset spatial rejection streak, no integrity slash, no additive recovery

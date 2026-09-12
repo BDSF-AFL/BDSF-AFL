@@ -65,6 +65,11 @@ experiment:
   subspace_beta: 0.85
   subspace_kappa: 0.10
   subspace_m_perp_base: 2.0
+  subspace_mu_floor: 0.0
+  subspace_energy_floor: 0.40
+  bisection_window: 4
+  bisection_variance_thresh: 1e-5
+  bisection_band_margin: 0.08
 
   algorithms:
     - "Proposed_BDSF_AFL"

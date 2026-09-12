@@ -53,8 +53,8 @@ BDSF_UPDATE_HEADERS: List[str] = [
     "trs_score",
 
     # Subspace Projection Engine (BDSF-AFL v2 / Gates 1, 1b, 2)
-    "subspace_c_min",
-    "subspace_c_sum",
+    "subspace_mu",
+    "subspace_rho_parallel",
     "subspace_norm_perp",
     "subspace_M_perp",
     "subspace_w_damp",
@@ -176,6 +176,8 @@ class BDSFLogger:
         gdv_score: Optional[float] = None,
         dbp_score: Optional[float] = None,
         trs_score: Optional[float] = None,
+        subspace_mu: Optional[float] = None,
+        subspace_rho_parallel: Optional[float] = None,
         subspace_c_min: Optional[float] = None,
         subspace_c_sum: Optional[float] = None,
         subspace_norm_perp: Optional[float] = None,
@@ -228,6 +230,8 @@ class BDSFLogger:
             "gdv_score": gdv_score,
             "dbp_score": dbp_score,
             "trs_score": trs_score,
+            "subspace_mu": subspace_mu,
+            "subspace_rho_parallel": subspace_rho_parallel,
             "subspace_c_min": subspace_c_min,
             "subspace_c_sum": subspace_c_sum,
             "subspace_norm_perp": subspace_norm_perp,

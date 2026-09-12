@@ -875,7 +875,7 @@ class TestBDSFSystem(unittest.TestCase):
             dynamic_bound_C=2.0, spatial_coherence=0.90, spatial_mature=True, sim_self_max=0.92, sim_anchor=0.88,
             sim_frozen_anchor=0.85, anchor_drift=0.03, history_depth=5, behavioral_mature=True,
             prc_score=0.65, tra_score=0.80, suspicion_score=0.0, gdv_score=0.15, dbp_score=0.75, trs_score=0.64,
-            subspace_c_min=0.12, subspace_c_sum=0.45, subspace_norm_perp=1.05, subspace_M_perp=2.10,
+            subspace_mu=0.55, subspace_rho_parallel=0.72, subspace_norm_perp=1.05, subspace_M_perp=2.10,
             subspace_w_damp=0.98, subspace_w_temporal=1.0, subspace_rho=0.02, subspace_basis_count=10,
             v_momentum_norm=0.15,
         )
@@ -898,8 +898,8 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertIn("gdv_score", header)
         self.assertIn("dbp_score", header)
         self.assertIn("trs_score", header)
-        self.assertIn("subspace_c_min", header)
-        self.assertIn("subspace_c_sum", header)
+        self.assertIn("subspace_mu", header)
+        self.assertIn("subspace_rho_parallel", header)
         self.assertIn("subspace_norm_perp", header)
         self.assertIn("subspace_M_perp", header)
         self.assertIn("subspace_w_damp", header)
@@ -984,6 +984,65 @@ class TestBDSFSystem(unittest.TestCase):
         # Fail
         out_fail = engine2.evaluate(0, temp_ev, spat_ev_fail, behav_ev, 1.0, 1.0, current_round=10)
         self.assertNotEqual(out_fail.action, "ACCEPT", "Must reject/quarantine when slightly below jittered threshold")
+
+    def test_anti_bisection_rejection_gate(self):
+        """Verifies that Priority 1c Anti-Bisection Rejection Gate catches S2 Mimicry bisection with zero variance."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["stochastic_jitter_max"] = 0.0
+        cfg["bisection_window"] = 4
+        cfg["bisection_variance_thresh"] = 1e-5
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.95, sim_self_max=0.95, history_depth=10, sim_anchor=0.85, behavioral_mature=True, trs_score=0.70)
+
+        # Attacker pins sim_global to exactly 0.20000 each round
+        for r in range(1, 4):
+            spat_ev = SpatialEvidence(sim_global=0.20000, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+            outcome = engine.evaluate(1, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=r)
+            self.assertEqual(outcome.action, "ACCEPT", f"Round {r} must pass before window fills")
+
+        # 4th submission with exact same pinned value triggers Priority 1c
+        spat_ev = SpatialEvidence(sim_global=0.20000, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+        outcome = engine.evaluate(1, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=4)
+        self.assertEqual(outcome.action, "REJECT", "4th pinned submission must trigger REJECT")
+        self.assertEqual(outcome.primary_reason, "BOUNDARY_PINNING_REJECT")
+
+        # Honest client with natural SGD variance in the same region is NOT rejected
+        honest_sims = [0.18, 0.22, 0.16, 0.21]
+        for r, sim in enumerate(honest_sims, start=1):
+            spat_ev = SpatialEvidence(sim_global=sim, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+            outcome = engine.evaluate(2, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=r)
+        self.assertEqual(outcome.action, "ACCEPT", "Honest client with natural variance must be ACCEPTED")
+
+    def test_subspace_manifold_energy_acceptance(self):
+        """Verifies that honest Non-IID updates with sim_global < theta_cos are accepted via manifold energy."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["stochastic_jitter_max"] = 0.0
+        cfg["subspace_mu_floor"] = 0.0
+        cfg["subspace_energy_floor"] = 0.40
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.90, history_depth=10, sim_anchor=0.80, behavioral_mature=True, trs_score=0.70)
+        # sim_global is 0.05 (well below theta_cos = 0.15), but manifold energy rho_parallel is 0.65 and mu is 0.30
+        spat_ev = SpatialEvidence(sim_global=0.05, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+
+        outcome = engine.evaluate(
+            0, temp_ev, spat_ev, behav_ev, 1.0, 1.0,
+            current_round=10,
+            subspace_mu=0.30,
+            subspace_rho_parallel=0.65,
+        )
+        self.assertEqual(outcome.action, "ACCEPT", "Must accept honest Non-IID update with high manifold energy")
+        self.assertEqual(outcome.primary_reason, "FULL_CONSENSUS_ACCEPT")
+        self.assertTrue(outcome.diagnostic_features["manifold_valid"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

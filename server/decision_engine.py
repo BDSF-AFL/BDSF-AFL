@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Any
+from collections import deque
 import math
 import random
 import numpy as np
@@ -66,6 +67,16 @@ class JointDecisionEngine:
         self.suspicion_reject_thresh: float = float(config.get("suspicion_reject_thresh", 0.65))
         self.suspicion_scores: dict[int, float] = {}
 
+        # --- Subspace Manifold Energy & Consensus Alignment (BDSF-AFL v2) ---
+        self.subspace_mu_floor: float = float(config.get("subspace_mu_floor", 0.0))
+        self.subspace_energy_floor: float = float(config.get("subspace_energy_floor", 0.40))
+
+        # --- Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Defense) ---
+        self.bisection_window: int = int(config.get("bisection_window", 4))
+        self.bisection_variance_thresh: float = float(config.get("bisection_variance_thresh", 1e-5))
+        self.bisection_band_margin: float = float(config.get("bisection_band_margin", 0.08))
+        self.sim_g_history: dict[int, deque] = {}
+
     def evaluate(
         self,
         cid: int,
@@ -76,6 +87,8 @@ class JointDecisionEngine:
         P_i: float,
         current_round: int = 0,
         version_lag: int = 0,
+        subspace_mu: Optional[float] = None,
+        subspace_rho_parallel: Optional[float] = None,
     ) -> JointDecisionOutcome:
         """Deterministically evaluates candidate update evidence against Priority 0-6 hierarchy."""
         # Apply deterministic stochastic jitter to the cosine threshold if configured
@@ -268,10 +281,46 @@ class JointDecisionEngine:
                     }
                 )
 
+        # Track per-client sim_global history for bisection variance detection
+        if sim_g is not None:
+            if cid not in self.sim_g_history:
+                self.sim_g_history[cid] = deque(maxlen=self.bisection_window)
+            self.sim_g_history[cid].append(float(sim_g))
+
+        # 1c. Deterministic Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Detection)
+        if len(self.sim_g_history.get(cid, [])) >= self.bisection_window:
+            history = list(self.sim_g_history[cid])
+            var_g = float(np.var(history))
+            mean_g = float(np.mean(history))
+            # Border band around acceptance threshold: [theta_cos - 0.02, theta_cos + bisection_band_margin]
+            is_on_boundary = (self.theta_cos - 0.02) <= mean_g <= (self.theta_cos + self.bisection_band_margin)
+            if is_on_boundary and var_g <= self.bisection_variance_thresh:
+                return JointDecisionOutcome(
+                    action="REJECT",
+                    primary_reason="BOUNDARY_PINNING_REJECT",
+                    aggregation_weight=0.0,
+                    force_sync_required=False,
+                    diagnostic_features={
+                        "priority": 1,
+                        "violation": "artificial_variance_collapse",
+                        "mean_sim_g": mean_g,
+                        "var_sim_g": var_g,
+                        "window": len(history),
+                        "sim_g": sim_g,
+                        "sim_frozen_anchor": sim_frozen,
+                        "anchor_drift": drift_a,
+                    }
+                )
+
         # ---------------------------------------------------------------------
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
-        is_spatial_valid = (sim_g is not None and sim_g >= effective_theta_cos)
+        manifold_valid = (
+            subspace_mu is not None and subspace_rho_parallel is not None and
+            subspace_mu >= self.subspace_mu_floor and
+            subspace_rho_parallel >= self.subspace_energy_floor
+        )
+        is_spatial_valid = (sim_g is not None and sim_g >= effective_theta_cos) or manifold_valid
         is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or is_spatial_valid)
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
@@ -301,6 +350,9 @@ class JointDecisionEngine:
                     "tra_score": tra,
                     "suspicion_score": S_i,
                     "is_trs_clean": is_trs_clean,
+                    "subspace_mu": subspace_mu,
+                    "subspace_rho_parallel": subspace_rho_parallel,
+                    "manifold_valid": manifold_valid,
                 }
             )
 

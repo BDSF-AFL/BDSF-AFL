@@ -256,9 +256,11 @@ class SubspaceProjectionEngine:
         c_hat = torch.matmul(self.Q.T, v_unit)  # [K'], coordinates
         c_hat_min = c_hat.min().item() if c_hat.numel() > 0 else 0.0
         c_hat_sum = c_hat.sum().item() if c_hat.numel() > 0 else 0.0
+        rho_parallel = torch.linalg.vector_norm(c_hat).item() if c_hat.numel() > 0 else 0.0
         metrics["c_min"] = c_hat_min
         metrics["c_sum"] = c_hat_sum
         metrics["mu"] = mu
+        metrics["rho_parallel"] = rho_parallel
 
         # Gate 1 check: Macro Manifold Inversion
         # Rejects if the update actively opposes the consensus manifold learning trajectory
