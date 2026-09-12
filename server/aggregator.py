@@ -504,10 +504,12 @@ class AggregatorServer:
                 self.temporal_filter.record_gap(g_i, cid)
 
                 # Consensus Basis Q Admission Policy (Council Approved):
-                # 1. Warmup / Cold-Start: Zero admission to Q (Q stays clean, no Trojan basis)
-                # 2. Post-Warmup: Update Q strictly from the server-aggregated spatial consensus reference (ref),
-                #    NEVER from raw individual client vectors! This eliminates S2 Mimicry single-client bisection.
-                if self.enable_subspace and self.subspace_engine is not None and not is_warmup:
+                # 1. Early Warmup: Zero admission to Q (Q stays clean, no Trojan basis)
+                # 2. Late Warmup (Final 20 rounds) & Post-Warmup: Update Q strictly from the server-aggregated
+                #    spatial consensus reference (ref), NEVER from raw individual client vectors!
+                warmup_cutoff = getattr(self.decision_engine, "warmup_rounds", 200)
+                is_prewarm_phase = is_warmup and (self.round_number >= max(0, warmup_cutoff - 20))
+                if self.enable_subspace and self.subspace_engine is not None and (not is_warmup or is_prewarm_phase):
                     ref = self.spatial_validator._build_reference()
                     if ref is not None:
                         self.subspace_engine.update_basis(ref)

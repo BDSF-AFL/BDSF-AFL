@@ -1195,5 +1195,57 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(outcome.action, "REJECT")
         self.assertEqual(outcome.primary_reason, "BOUNDARY_PINNING_REJECT")
 
+    def test_warmup_sim_g_history_retention_and_immediate_postwarmup_rejection(self):
+        """Verifies that sim_g_history is recorded during warmup, enabling immediate post-warmup rejection on Update 200."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 200
+        cfg["spatial_warmup_rounds"] = 200
+        cfg["theta_cos"] = 0.15
+        cfg["bisection_variance_thresh"] = 5e-5
+        cfg["bisection_window"] = 4
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.90, history_depth=10, sim_anchor=0.85, behavioral_mature=True, trs_score=0.60)
+
+        # 4 bisection submissions during warmup (rounds 190, 193, 196, 199)
+        warmup_sims = [0.200001, 0.200005, 0.200002, 0.200003]
+        for r, sim in zip([190, 193, 196, 199], warmup_sims):
+            spat_ev = SpatialEvidence(sim_global=sim, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+            outcome = engine.evaluate(0, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=r)
+            self.assertEqual(outcome.action, "ACCEPT")
+            self.assertEqual(outcome.primary_reason, "SPATIAL_WARMUP_ACCEPT")
+
+        # History must be populated
+        self.assertEqual(len(engine.sim_g_history[0]), 4)
+
+        # Update 200 (first post-warmup update for this client)
+        spat_ev = SpatialEvidence(sim_global=0.200002, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+        outcome = engine.evaluate(0, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=200)
+        self.assertEqual(outcome.action, "REJECT", "Post-warmup bisection must be rejected immediately on round 200")
+        self.assertEqual(outcome.primary_reason, "BOUNDARY_PINNING_REJECT")
+
+    def test_honest_converging_trajectory_not_falsely_rejected(self):
+        """Verifies that honest converging updates with natural variance ~3.9e-4 are not falsely rejected."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["bisection_variance_thresh"] = 5e-5  # Calibrated threshold
+        cfg["bisection_window"] = 4
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.95, sim_self_max=0.98, history_depth=10, sim_anchor=0.70, behavioral_mature=True, trs_score=0.55)
+
+        # Natural honest convergence sequence from real Client 8 (var = 3.94e-4 > 5e-5)
+        honest_sims = [0.195094, 0.165243, 0.156593, 0.140462]
+        for r, sim in enumerate(honest_sims, start=1):
+            spat_ev = SpatialEvidence(sim_global=sim, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+            outcome = engine.evaluate(8, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=r)
+
+        self.assertNotEqual(outcome.action, "REJECT", "Honest converging client must NOT be falsely rejected")
+        self.assertNotEqual(outcome.primary_reason, "BOUNDARY_PINNING_REJECT")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

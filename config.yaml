@@ -72,7 +72,7 @@ subspace_energy_floor: 0.40      # minimum fraction of energy in consensus manif
 
 # Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Detection)
 bisection_window: 4              # window of recent updates to check for boundary variance collapse
-bisection_variance_thresh: 0.0005 # variance <= 0.0005 on boundary indicates bisection
+bisection_variance_thresh: 0.00005 # variance <= 5e-5 on boundary indicates bisection
 bisection_band_margin: 0.10      # boundary window: [theta_cos - 0.02, theta_cos + margin]
 
 # Trajectory Rigidity & Variance Behavioral Defense
@@ -80,6 +80,8 @@ trs_reject_thresh: 0.85  # TRS >= 0.85 + depth >= 5 -> REJECT + SLASH (proven ri
 trs_warn_thresh: 0.80    # TRS in (0.70, 0.80] -> DOWNWEIGHT
 trs_safe_thresh: 0.70    # TRS <= 0.70 -> clean full consensus acceptance
 trs_min_depth: 5         # minimum history depth before active trajectory sentencing
+trs_consensus_exempt: true
+trs_consensus_margin: 0.10
 
 # Pairwise Residual Coherence (PRC) & Temporal Residual Autocorrelation (TRA)
 theta_prc: 0.20          # logged diagnostic PRC score

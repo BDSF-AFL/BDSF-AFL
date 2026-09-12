@@ -68,7 +68,7 @@ experiment:
   subspace_mu_floor: 0.10
   subspace_energy_floor: 0.40
   bisection_window: 4
-  bisection_variance_thresh: 0.0005
+  bisection_variance_thresh: 0.00005
   bisection_band_margin: 0.10
 
   algorithms:

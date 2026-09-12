@@ -73,7 +73,7 @@ class JointDecisionEngine:
 
         # --- Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Defense) ---
         self.bisection_window: int = int(config.get("bisection_window", 4))
-        self.bisection_variance_thresh: float = float(config.get("bisection_variance_thresh", 0.0005))
+        self.bisection_variance_thresh: float = float(config.get("bisection_variance_thresh", 0.00005))
         self.bisection_band_margin: float = float(config.get("bisection_band_margin", 0.10))
         self.sim_g_history: dict[int, deque] = {}
 
@@ -99,6 +99,12 @@ class JointDecisionEngine:
             effective_theta_cos = self.theta_cos
 
         sim_g = spatial_ev.sim_global
+        # Track per-client sim_global history for bisection variance detection (active across all rounds)
+        if sim_g is not None:
+            if cid not in self.sim_g_history:
+                self.sim_g_history[cid] = deque(maxlen=self.bisection_window)
+            self.sim_g_history[cid].append(float(sim_g))
+
         sim_s_mean = behavioral_ev.sim_self_mean
         sim_s_max = behavioral_ev.sim_self_max
         if sim_s_mean is not None and sim_s_max is not None:
@@ -281,12 +287,6 @@ class JointDecisionEngine:
                     }
                 )
 
-        # Track per-client sim_global history for bisection variance detection
-        if sim_g is not None:
-            if cid not in self.sim_g_history:
-                self.sim_g_history[cid] = deque(maxlen=self.bisection_window)
-            self.sim_g_history[cid].append(float(sim_g))
-
         # 1c. Deterministic Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Detection)
         if len(self.sim_g_history.get(cid, [])) >= self.bisection_window:
             history = list(self.sim_g_history[cid])
@@ -315,18 +315,23 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
+        # Macro consensus requirement: when Basis Q is mature, ensure update moves forward with consensus
+        is_consensus_macro_valid = (subspace_mu is None or subspace_mu >= 0.05)
+
+        # Manifold validity: non-negative 1D projection with verified consensus manifold alignment
         manifold_valid = (
             sim_g is not None and sim_g >= 0.0 and
             subspace_mu is not None and subspace_rho_parallel is not None and
             subspace_mu >= self.subspace_mu_floor and
             subspace_rho_parallel >= self.subspace_energy_floor
         )
-        is_spatial_valid = (sim_g is not None and sim_g >= effective_theta_cos) or manifold_valid
+
+        is_spatial_valid = ((sim_g is not None and sim_g >= effective_theta_cos) or manifold_valid) and is_consensus_macro_valid
         is_self_valid = (not behavioral_ev.behavioral_mature or sim_s is None or sim_s >= self.theta_self)
         is_anchor_valid = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or is_spatial_valid)
         is_temporal_valid = (not temporal_ev.temporal_mature or g_margin <= 0.20)
         is_suspicion_clean = (S_i < 0.30)
-        is_prc_valid = (prc is None or prc >= self.theta_prc)
+        is_prc_valid = (prc is None or prc >= self.theta_prc or (manifold_valid and prc >= 0.10))
         is_trs_clean = (trs is None or depth < self.trs_min_depth or trs < self.trs_accept_thresh or is_consensus_exempt)
 
         if (is_spatial_valid and is_self_valid and is_anchor_valid and is_temporal_valid and
