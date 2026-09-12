@@ -68,13 +68,13 @@ class JointDecisionEngine:
         self.suspicion_scores: dict[int, float] = {}
 
         # --- Subspace Manifold Energy & Consensus Alignment (BDSF-AFL v2) ---
-        self.subspace_mu_floor: float = float(config.get("subspace_mu_floor", 0.0))
+        self.subspace_mu_floor: float = float(config.get("subspace_mu_floor", 0.10))
         self.subspace_energy_floor: float = float(config.get("subspace_energy_floor", 0.40))
 
         # --- Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Defense) ---
         self.bisection_window: int = int(config.get("bisection_window", 4))
-        self.bisection_variance_thresh: float = float(config.get("bisection_variance_thresh", 1e-5))
-        self.bisection_band_margin: float = float(config.get("bisection_band_margin", 0.08))
+        self.bisection_variance_thresh: float = float(config.get("bisection_variance_thresh", 0.0005))
+        self.bisection_band_margin: float = float(config.get("bisection_band_margin", 0.10))
         self.sim_g_history: dict[int, deque] = {}
 
     def evaluate(
@@ -316,6 +316,7 @@ class JointDecisionEngine:
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
         # ---------------------------------------------------------------------
         manifold_valid = (
+            sim_g is not None and sim_g >= 0.0 and
             subspace_mu is not None and subspace_rho_parallel is not None and
             subspace_mu >= self.subspace_mu_floor and
             subspace_rho_parallel >= self.subspace_energy_floor
@@ -396,7 +397,12 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         c_dw = behavioral_ev.consecutive_dw
         theta_self_eff = self.theta_self + min(self.delta_theta_max, c_dw * self.delta_theta_step)
-        is_anchor_valid_p4 = (behavioral_ev.sim_anchor is None or behavioral_ev.sim_anchor >= self.theta_anchor_min or (sim_g is not None and sim_g >= effective_theta_cos))
+        is_anchor_valid_p4 = (
+            behavioral_ev.sim_anchor is None or
+            behavioral_ev.sim_anchor >= self.theta_anchor_min or
+            (sim_g is not None and sim_g >= effective_theta_cos) or
+            (sim_s is not None and sim_s >= theta_self_eff)
+        )
         sim_a = behavioral_ev.sim_anchor
         is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
@@ -458,7 +464,7 @@ class JointDecisionEngine:
         # PRIORITY 5: Ambiguous / Borderline Evidence (QUARANTINE)
         # ---------------------------------------------------------------------
         if self.enable_quarantine:
-            is_borderline_spatial = (sim_g is not None and abs(sim_g - effective_theta_cos) <= self.delta_borderline and not behavioral_ev.behavioral_mature)
+            is_borderline_spatial = (sim_g is not None and abs(sim_g - effective_theta_cos) <= self.delta_borderline)
             is_moderate_temporal_trusted = (temporal_ev.temporal_mature and 0.0 < g_margin <= self.delta_temp_mod and I_i >= self.trusted_integrity_min and (sim_g is None or sim_g >= 0.0))
 
             if is_borderline_spatial or is_moderate_temporal_trusted:

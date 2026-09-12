@@ -32,6 +32,7 @@ from shared.types import (
 )
 from utils.logger import BDSFLogger
 import utils.metrics as metrics
+from client.client_node import ClientNode
 
 
 class TestBDSFSystem(unittest.TestCase):
@@ -1043,6 +1044,156 @@ class TestBDSFSystem(unittest.TestCase):
         self.assertEqual(outcome.action, "ACCEPT", "Must accept honest Non-IID update with high manifold energy")
         self.assertEqual(outcome.primary_reason, "FULL_CONSENSUS_ACCEPT")
         self.assertTrue(outcome.diagnostic_features["manifold_valid"])
+
+    def test_client_train_async_concurrency(self):
+        """Verifies that ClientNode.train_async supports non-blocking concurrent execution and semaphore throttling."""
+        import asyncio
+        import time
+        import threading
+
+        concurrency_stats = {"active": 0, "max_concurrent": 0}
+        lock = threading.Lock()
+
+        class MockTrainer:
+            def __init__(self, delay=0.04):
+                self.delay = delay
+                self.call_count = 0
+
+            def train(self, W_global, current_round=0):
+                with lock:
+                    concurrency_stats["active"] += 1
+                    if concurrency_stats["active"] > concurrency_stats["max_concurrent"]:
+                        concurrency_stats["max_concurrent"] = concurrency_stats["active"]
+                time.sleep(self.delay)
+                self.call_count += 1
+                with lock:
+                    concurrency_stats["active"] -= 1
+                return W_global.clone() + 1.0
+
+        async def run_test():
+            sem0 = asyncio.Semaphore(1)
+            sem1 = asyncio.Semaphore(1)
+
+            t0 = MockTrainer(0.04)
+            t1 = MockTrainer(0.04)
+
+            c0 = ClientNode(0, t0, None, None, {}, None, device_semaphore=sem0)
+            c1 = ClientNode(1, t1, None, None, {}, None, device_semaphore=sem1)
+
+            W = torch.zeros(10)
+            res0, res1 = await asyncio.gather(c0.train_async(W), c1.train_async(W))
+
+            self.assertTrue(torch.allclose(res0, torch.ones(10)))
+            self.assertTrue(torch.allclose(res1, torch.ones(10)))
+            self.assertEqual(concurrency_stats["max_concurrent"], 2, "Separate device semaphores must run concurrently (max_concurrent=2)")
+
+            # Reset stats and test throttling on the same device semaphore
+            concurrency_stats["active"] = 0
+            concurrency_stats["max_concurrent"] = 0
+
+            sem_shared = asyncio.Semaphore(1)
+            t_shared = MockTrainer(0.02)
+            c_shared_a = ClientNode(2, t_shared, None, None, {}, None, device_semaphore=sem_shared)
+            c_shared_b = ClientNode(3, t_shared, None, None, {}, None, device_semaphore=sem_shared)
+
+            await asyncio.gather(c_shared_a.train_async(W), c_shared_b.train_async(W))
+            self.assertEqual(concurrency_stats["max_concurrent"], 1, "Shared semaphore must strictly limit concurrency to 1")
+
+        asyncio.run(run_test())
+
+    def test_priority2_blocks_counter_directional_subspace_backdoor(self):
+        """Verifies that negative cosine updates (sim_g < 0.0) cannot enter Priority 2 via subspace manifold."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["stochastic_jitter_max"] = 0.0
+        cfg["subspace_mu_floor"] = 0.10
+        cfg["subspace_energy_floor"] = 0.40
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.90, history_depth=10, sim_anchor=0.80, behavioral_mature=True, trs_score=0.70)
+        # Counter-directional gradient (sim_g = -0.13), but attacker projects onto manifold with high energy
+        spat_ev = SpatialEvidence(sim_global=-0.13, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+
+        outcome = engine.evaluate(
+            0, temp_ev, spat_ev, behav_ev, 1.0, 1.0,
+            current_round=10,
+            subspace_mu=0.25,
+            subspace_rho_parallel=0.85,
+        )
+        self.assertNotEqual(outcome.action, "ACCEPT", "Negative cosine gradient must NEVER be accepted via Priority 2")
+        self.assertNotEqual(outcome.primary_reason, "FULL_CONSENSUS_ACCEPT")
+
+    def test_priority4_honest_non_iid_self_consistency_rescue(self):
+        """Verifies that honest Non-IID updates with anchor drift are safely downweighted rather than falsely rejected."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["stochastic_jitter_max"] = 0.0
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        # Honest client with extreme Non-IID skew: sim_anchor is low (0.12 < 0.25) because anchor was seeded from global consensus,
+        # and sim_global is slightly negative (-0.05 < 0.15), BUT local self-consistency is high (sim_self_max = 0.98 >= theta_self_eff)
+        behav_ev = BehavioralEvidence(
+            sim_self_mean=0.95, sim_self_max=0.98, history_depth=10,
+            sim_anchor=0.12, behavioral_mature=True, trs_score=0.55
+        )
+        spat_ev = SpatialEvidence(sim_global=-0.05, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+
+        outcome = engine.evaluate(4, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=10)
+        self.assertEqual(outcome.action, "DOWNWEIGHT", "Honest Non-IID update with high self-consistency must be DOWNWEIGHTED")
+        self.assertEqual(outcome.primary_reason, "NON_IID_HONEST_CONSISTENCY")
+
+    def test_priority5_borderline_quarantine_mature_clients(self):
+        """Verifies that mature clients hovering within delta_borderline of theta_cos enter Priority 5 QUARANTINE."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["delta_borderline"] = 0.03
+        cfg["stochastic_jitter_max"] = 0.0
+        cfg["enable_quarantine"] = True
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        # sim_global = 0.13 (|0.13 - 0.15| = 0.02 <= delta_borderline = 0.03), low anchor & low self consistency
+        behav_ev = BehavioralEvidence(
+            sim_self_mean=0.10, sim_self_max=0.15, history_depth=10,
+            sim_anchor=0.10, behavioral_mature=True, trs_score=0.50
+        )
+        spat_ev = SpatialEvidence(sim_global=0.13, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+
+        outcome = engine.evaluate(5, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=10)
+        self.assertEqual(outcome.action, "QUARANTINE", "Mature borderline spatial update must enter QUARANTINE")
+        self.assertEqual(outcome.primary_reason, "AMBIGUOUS_EVIDENCE_QUARANTINE")
+
+    def test_anti_bisection_variance_threshold_calibrated(self):
+        """Verifies that bisection with empirical variance <= 5e-4 on [0.13, 0.25] triggers BOUNDARY_PINNING_REJECT."""
+        cfg = self.config.copy()
+        cfg["warmup_rounds"] = 0
+        cfg["spatial_warmup_rounds"] = 0
+        cfg["theta_cos"] = 0.15
+        cfg["bisection_variance_thresh"] = 0.0005
+        cfg["bisection_band_margin"] = 0.10
+        engine = JointDecisionEngine(cfg)
+
+        temp_ev = TemporalEvidence(g_i=1.0, lower_fence=0.5, upper_fence=2.0, fence_margin=0.0, client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=0)
+        behav_ev = BehavioralEvidence(sim_self_mean=0.90, sim_self_max=0.90, history_depth=10, sim_anchor=0.85, behavioral_mature=True, trs_score=0.60)
+
+        # Empirical attacker bisection sequence from Kaggle trace (Client 0: var = 1.63e-5)
+        attacker_sims = [0.2000, 0.2101, 0.2017, 0.2009]
+        for r, sim in enumerate(attacker_sims[:-1], start=1):
+            spat_ev = SpatialEvidence(sim_global=sim, norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+            outcome = engine.evaluate(0, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=r)
+
+        spat_ev = SpatialEvidence(sim_global=attacker_sims[-1], norm_raw=1.0, norm_clipped=1.0, spatial_mature=True)
+        outcome = engine.evaluate(0, temp_ev, spat_ev, behav_ev, 1.0, 1.0, current_round=4)
+        self.assertEqual(outcome.action, "REJECT")
+        self.assertEqual(outcome.primary_reason, "BOUNDARY_PINNING_REJECT")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

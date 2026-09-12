@@ -69,7 +69,7 @@ class SubspaceProjectionEngine:
         K: int = 10,
         eps_floor: float = 0.05,
         c_min_floor: float = 0.30,
-        macro_floor: float = 0.25,
+        macro_floor: float = 0.40,
         alpha: float = 0.6,
         lam: float = 3.0,
         beta: float = 0.85,

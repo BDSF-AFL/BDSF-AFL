@@ -59,7 +59,7 @@ norm_anomaly_threshold: 1.60 # logged diagnostic threshold (not a rejection gate
 # Layer-Stratified Subspace Projection Engine (BDSF-AFL v2)
 enable_subspace: true
 subspace_K: 10
-subspace_macro_floor: 0.25
+subspace_macro_floor: 0.40
 subspace_c_min_floor: 0.30
 subspace_eps_floor: 0.05
 subspace_alpha: 0.60
@@ -67,13 +67,13 @@ subspace_lam: 3.0
 subspace_beta: 0.85
 subspace_kappa: 0.10
 subspace_m_perp_base: 2.0
-subspace_mu_floor: 0.0           # macro consensus alignment floor
+subspace_mu_floor: 0.10          # macro consensus alignment floor
 subspace_energy_floor: 0.40      # minimum fraction of energy in consensus manifold (rho_parallel)
 
 # Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Detection)
 bisection_window: 4              # window of recent updates to check for boundary variance collapse
-bisection_variance_thresh: 1e-5  # variance <= 1e-5 on boundary indicates bisection
-bisection_band_margin: 0.08      # boundary window: [theta_cos - 0.02, theta_cos + margin]
+bisection_variance_thresh: 0.0005 # variance <= 0.0005 on boundary indicates bisection
+bisection_band_margin: 0.10      # boundary window: [theta_cos - 0.02, theta_cos + margin]
 
 # Trajectory Rigidity & Variance Behavioral Defense
 trs_reject_thresh: 0.85  # TRS >= 0.85 + depth >= 5 -> REJECT + SLASH (proven rigid steering)

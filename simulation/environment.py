@@ -96,7 +96,7 @@ class AttackInjectorWrapper:
  
         # 3. Train locally to get honest gradient
         current_round = getattr(self.server, "round_number", 0)
-        honest_delta_W = self.client.trainer.train(W_global, current_round=current_round)
+        honest_delta_W = await self.client.train_async(W_global, current_round=current_round)
         t_submit_honest = tau + delay
         
         # Calculate honest gap g_i
@@ -210,6 +210,7 @@ class SimulationEnvironment:
 
         use_multiprocess = False
         pool = None
+        device_semaphores = {str(d): asyncio.Semaphore(1) for d in all_devices}
         
         for i in range(N):
             # Round-robin device assignment
@@ -221,7 +222,11 @@ class SimulationEnvironment:
             trainer = LocalTrainer(local_model, dataloaders[i], client_config)
             session_key = server.get_session_key(i)
             fs_handler = ForceSyncHandler(i, session_key, logger)
-            client_node = ClientNode(i, trainer, server, fs_handler, client_config, logger, local_model=local_model, dataloader=dataloaders[i], pool=None)
+            client_node = ClientNode(
+                i, trainer, server, fs_handler, client_config, logger,
+                local_model=local_model, dataloader=dataloaders[i], pool=None,
+                device_semaphore=device_semaphores.get(str(client_device)),
+            )
             
             if i in byz_ids:
                 server.register_client_ground_truth(i, is_byzantine=True)

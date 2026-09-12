@@ -87,7 +87,7 @@ class AggregatorServer:
                 K=config.get("subspace_K", 10),
                 eps_floor=float(config.get("subspace_eps_floor", 0.05)),
                 c_min_floor=float(config.get("subspace_c_min_floor", 0.30)),
-                macro_floor=float(config.get("subspace_macro_floor", 0.25)),
+                macro_floor=float(config.get("subspace_macro_floor", 0.40)),
                 alpha=float(config.get("subspace_alpha", 0.6)),
                 lam=float(config.get("subspace_lam", 3.0)),
                 beta=float(config.get("subspace_beta", 0.85)),

@@ -8,7 +8,7 @@ from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
 
 class ClientNode:
-    def __init__(self, client_id: int, trainer: LocalTrainer, server: object, force_sync_handler: ForceSyncHandler, config: dict, logger: BDSFLogger, local_model = None, dataloader = None, pool = None):
+    def __init__(self, client_id: int, trainer: LocalTrainer, server: object, force_sync_handler: ForceSyncHandler, config: dict, logger: BDSFLogger, local_model = None, dataloader = None, pool = None, device_semaphore: asyncio.Semaphore = None):
         self.client_id = client_id
         self.trainer = trainer
         self.server = server
@@ -18,11 +18,27 @@ class ClientNode:
         self.local_model = local_model
         self.dataloader = dataloader
         self.pool = pool
+        self.device_semaphore = device_semaphore
         self._state = {"W_local": None, "gradient_buffer": [], "last_reset_time": 0.0}
         self._mu_delay = config.get("lognormal_mu", 0.5)
         self._sigma_delay = config.get("lognormal_sigma", 1.0)
         self._T_base = config.get("T_base", 1.0)
         self._last_submit_time: float = 0.0
+
+    async def train_async(self, W_global: torch.Tensor, current_round: int = 0) -> torch.Tensor:
+        """Executes client training in a background worker thread with optional per-device concurrency limiting."""
+        async def _run_training():
+            if hasattr(asyncio, "to_thread"):
+                return await asyncio.to_thread(self.trainer.train, W_global, current_round=current_round)
+            else:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, self.trainer.train, W_global, current_round)
+
+        if self.device_semaphore is not None:
+            async with self.device_semaphore:
+                return await _run_training()
+        else:
+            return await _run_training()
 
     async def run_one_round(self) -> dict:
         # 1. Pull global weights or use force-synced weights
@@ -49,7 +65,7 @@ class ClientNode:
  
         # 3. Train locally
         current_round = getattr(self.server, "round_number", 0)
-        delta_W = self.trainer.train(W_global, current_round=current_round)
+        delta_W = await self.train_async(W_global, current_round=current_round)
  
         # 4. Build submission with monotonic virtual timestamp
         t_submit = tau + delay

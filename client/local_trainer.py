@@ -52,8 +52,13 @@ class LocalTrainer:
             return self.local_lr
 
     def train(self, W_global: torch.Tensor, current_round: int = 0) -> torch.Tensor:
-        if self._stream is not None:
-            with torch.cuda.stream(self._stream):
+        _is_cuda = isinstance(self.device, torch.device) and self.device.type == "cuda"
+        _is_cuda = _is_cuda or (isinstance(self.device, str) and "cuda" in str(self.device))
+        if _is_cuda:
+            with torch.cuda.device(self.device):
+                if self._stream is not None:
+                    with torch.cuda.stream(self._stream):
+                        return self._train_impl(W_global, current_round=current_round)
                 return self._train_impl(W_global, current_round=current_round)
         return self._train_impl(W_global, current_round=current_round)
 
