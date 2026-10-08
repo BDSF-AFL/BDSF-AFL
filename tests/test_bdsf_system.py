@@ -864,8 +864,8 @@ class TestBDSFSystem(unittest.TestCase):
         I_post, _ = rep.get(0)
         self.assertLess(I_post, 1.0, "Integrity must be slashed post-warmup after streak exceeds grace_k")
 
-    def test_csv_schema_44_columns(self):
-        """Verifies that BDSFLogger writes exactly the 44 expected columns for the modern architecture."""
+    def test_csv_schema_45_columns(self):
+        """Verifies that BDSFLogger writes exactly the 45 expected columns (44 original + sim_global_raw) for the modern architecture."""
         log_dir = "logs/test_suite_tmp/"
         logger = BDSFLogger("test_schema_44", {"log_dir": log_dir})
         logger.log_update(
@@ -886,8 +886,8 @@ class TestBDSFSystem(unittest.TestCase):
             header = reader[0]
             row = reader[1]
 
-        self.assertEqual(len(header), 44)
-        self.assertEqual(len(row), 44)
+        self.assertEqual(len(header), 45)
+        self.assertEqual(len(row), 45)
         self.assertIn("is_byzantine", header)
         self.assertIn("priority", header)
         self.assertIn("is_warmup", header)

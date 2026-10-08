@@ -70,10 +70,24 @@ subspace_m_perp_base: 2.0
 subspace_mu_floor: 0.10          # macro consensus alignment floor
 subspace_energy_floor: 0.40      # minimum fraction of energy in consensus manifold (rho_parallel)
 
-# Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Detection)
-bisection_window: 4              # window of recent updates to check for boundary variance collapse
-bisection_variance_thresh: 0.00005 # variance <= 5e-5 on boundary indicates bisection
-bisection_band_margin: 0.10      # boundary window: [theta_cos - 0.02, theta_cos + margin]
+# Boundary-Pinning Rejection Gate (S2 Mimicry & Adaptive Detection, Priority 1c)
+# Runs on the RAW cosine (before subspace damping) and only on the client's in-band samples, so
+# COMPOUND's interleaved T1 noise cannot dilute it. S2's raw cosine variance is ~1e-12; honest
+# clients hovering in the band show ~1e-3. ADAPTIVE (0.9 safety backoff + jitter) is noisier, so the
+# threshold is looser and the window longer than before. CALIBRATE bisection_variance_thresh on the
+# in-band raw-cosine variance of honest clients in your own logs (column sim_global_raw).
+bisection_window: 6              # number of in-band raw-cosine samples required
+bisection_variance_thresh: 0.0001 # variance <= 1e-4 over that window => boundary pinning
+bisection_band_margin: 0.10      # boundary band: [theta_cos - 0.02, theta_cos + margin]
+exempt_use_raw_sim: true         # consensus-exemption (TRS bypass) uses raw cosine, not subspace-damped
+stochastic_jitter_max: 0.04      # explicit now (was an undocumented code default); S2 targets theta_cos+0.05
+subspace_damp_reject_floor: 0.02 # Gate-2 w_damp below this => spatial REJECT (T1 noise), 0 disables
+
+# Leaky rejection memory (reputation). Replaces "3 consecutive rejects" as the ONLY slash trigger,
+# which COMPOUND (reject/accept alternation) bypassed forever.
+rep_reject_ema_rho: 0.20         # EMA step for the per-client rejection rate
+rep_reject_ema_slash: 0.40       # slash I whenever rejection-rate EMA >= this
+rep_reject_ema_recover_block: 0.30 # withhold the +beta_I recovery while EMA >= this
 
 # Trajectory Rigidity & Variance Behavioral Defense
 trs_reject_thresh: 0.85  # TRS >= 0.85 + depth >= 5 -> REJECT + SLASH (proven rigid steering)

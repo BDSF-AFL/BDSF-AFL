@@ -378,6 +378,12 @@ class AggregatorServer:
             self.temporal_filter.step_seen()
 
         # --- Subspace Manifold Gating & Orthogonal Damping (BDSF-AFL v2) ---
+        # Keep the submission exactly as the client sent it. The subspace engine below replaces
+        # submission.delta_W with a damped v_clean, which raises every client's cosine to the
+        # reference and hides the constant-cosine signature of boundary-pinning attackers (S2 /
+        # ADAPTIVE). The raw vector is passed to the spatial validator so the pinning gate in the
+        # decision engine can still see it (SpatialEvidence.sim_global_raw).
+        raw_delta_W = submission.delta_W
         sub_metrics = None
         if self.enable_subspace and self.subspace_engine is not None and self.subspace_engine.is_basis_full():
             v_clean, sub_metrics = self.subspace_engine.filter_update(
@@ -385,6 +391,16 @@ class AggregatorServer:
                 v=submission.delta_W,
                 tau=float(version_lag),
             )
+            # Energy-collapse guard: if Gate 2 has to scale the orthogonal energy below this
+            # floor (e.g. T1 random noise at 2x the honest norm gets w_damp ~ 1e-3), the update is
+            # not a legitimate non-IID client -- reject it as a spatial violation. Previously such
+            # updates shrank to ~0 and were rejected by HARD_GUARD_ZERO_GRADIENT, which only
+            # slashed pace and left integrity untouched. Set subspace_damp_reject_floor: 0 to disable.
+            damp_floor = float(self.config.get("subspace_damp_reject_floor", 0.02))
+            if (sub_metrics["action"] != "REJECT" and damp_floor > 0.0
+                    and sub_metrics.get("w_damp", 1.0) < damp_floor):
+                sub_metrics["action"] = "REJECT"
+                sub_metrics["reason"] = "SUBSPACE_ENERGY_COLLAPSE"
             if sub_metrics["action"] == "REJECT":
                 self.rep_manager.record_spatial_rejection(cid)
                 reg.last_update_time = t_now
@@ -417,7 +433,9 @@ class AggregatorServer:
 
         # --- Evidence Extraction (Observability Layer) ---
         temporal_evidence = self.temporal_filter.extract_evidence(g_i, cid, version_lag=version_lag)
-        spatial_evidence = self.spatial_validator.extract_evidence(submission.delta_W, client_id=cid)
+        spatial_evidence = self.spatial_validator.extract_evidence(
+            submission.delta_W, client_id=cid, raw_delta_W=raw_delta_W,
+        )
         client_gaps = self.temporal_filter.client_gap_history.get(cid, [])
         behavioral_evidence = self.behavioral_memory.extract_evidence(
             client_id=cid,
@@ -445,6 +463,7 @@ class AggregatorServer:
             "fence_margin": temporal_evidence.fence_margin,
             "temporal_mature": temporal_evidence.temporal_mature,
             "sim_global": spatial_evidence.sim_global,
+            "sim_global_raw": spatial_evidence.sim_global_raw,
             "norm_raw": spatial_evidence.norm_raw,
             "norm_clipped": spatial_evidence.norm_clipped,
             "norm_ratio_median": spatial_evidence.norm_ratio_median,
@@ -569,6 +588,10 @@ class AggregatorServer:
                             P_i=q_entry.reputation_at_entry[1],
                         )
                     elif q_act == "REJECT":
+                        # An update that sat in quarantine until expiry never earned acceptance.
+                        # Count it toward the leaky rejection rate (previously it was only logged,
+                        # so an attacker whose T1 half landed in quarantine paid no reputation cost).
+                        self.rep_manager.record_leaky_rejection(q_entry.client_id)
                         self._log_update(
                             round=self.round_number, client_id=q_entry.client_id,
                             status="REJECT", reason="QUARANTINE_EXPIRED_REJECT",
@@ -681,12 +704,19 @@ class AggregatorServer:
                 fs_payload = None
                 if outcome.force_sync_required or outcome.primary_reason == "HARD_GUARD_TEMPORAL_STRAGGLER":
                     self.rep_manager.reduce_pace(cid)
+                    if outcome.primary_reason == "HARD_GUARD_ZERO_GRADIENT":
+                        # Zero/vanishing gradient is not a timing fault: also charge integrity
+                        # through the leaky rejection rate (pace slash alone left I at 1.00).
+                        self.rep_manager.record_leaky_rejection(cid)
                     fs_payload = self.force_sync_dispatcher.build_payload(
                         cid, self.W_global, reg.session_key, self.get_virtual_time()
                     )
                     reg.last_update_time = fs_payload.timestamp
                 elif outcome.primary_reason == "HARD_GUARD_TEMPORAL_SPAM":
                     self.rep_manager.reduce_pace(cid)
+                    # Flooding is adversarial behaviour; stragglers (above) are deliberately NOT
+                    # charged here because honest slow clients also land in that branch.
+                    self.rep_manager.record_leaky_rejection(cid)
                 elif outcome.primary_reason in ("TEMPORAL_RESIDUAL_INCOHERENCE_REJECT", "PROGRESSIVE_SUSPICION_TRAJECTORY_REJECT", "TRAJECTORY_RIGIDITY_REJECT"):
                     self.rep_manager.record_spatial_rejection(cid)
                     reg.last_update_time = t_now
@@ -1027,6 +1057,7 @@ class AggregatorServer:
             "rep_scores": {cid: {"I": s["I"], "P": s["P"]} for cid, s in self.rep_manager.scores.items()},
             "rep_history": {cid: list(h) for cid, h in self.rep_manager._history.items()},
             "spatial_streaks": dict(self.rep_manager.spatial_reject_streak),
+            "reject_ema": dict(self.rep_manager.reject_ema),
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
             "temporal_state": self.temporal_filter.get_state(),
             "spatial_state": self.spatial_validator.get_state(),
@@ -1055,6 +1086,10 @@ class AggregatorServer:
             for cid, val in state["spatial_streaks"].items():
                 if cid in self.rep_manager.spatial_reject_streak:
                     self.rep_manager.spatial_reject_streak[cid] = val
+        if "reject_ema" in state:
+            for cid, val in state["reject_ema"].items():
+                if cid in self.rep_manager.reject_ema:
+                    self.rep_manager.reject_ema[cid] = float(val)
         if "borderline_streaks" in state:
             for cid, val in state["borderline_streaks"].items():
                 if cid in self.rep_manager.borderline_streak:

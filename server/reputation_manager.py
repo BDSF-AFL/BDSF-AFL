@@ -8,6 +8,21 @@ class ReputationManager:
     The asymmetry (beta_I < beta_P, alpha_I >= alpha_P) is a core research
     contribution of BDSF-AFL: integrity violations are punished harder and
     recover slower than pace violations.
+
+    Leaky rejection memory (added)
+    ------------------------------
+    The original rule slashed I only after ``spatial_grace_k`` CONSECUTIVE rejections and reset
+    that streak on every accepted update, while every accept also added +beta_I. An attacker
+    that alternates a rejectable update with an acceptable one (COMPOUND: T1 / S2) therefore
+    never reached the streak and was never slashed (I stayed 1.00 in our check).
+    Each client now also carries an exponential moving average of its rejection rate:
+
+        ema <- (1 - rho) * ema + rho * [rejected]
+
+    * I is slashed whenever the streak rule fires OR ema >= ``rep_reject_ema_slash``.
+    * The integrity recovery (+beta_I) is withheld while ema >= ``rep_reject_ema_recover_block``.
+    An honest client with an isolated false rejection peaks at ema = rho (0.20) and decays,
+    so it stays below both thresholds; a client rejected every other round settles near 0.44-0.56.
     """
 
     def __init__(self, client_ids: list[int], config: dict) -> None:
@@ -47,6 +62,12 @@ class ReputationManager:
         self.slashing_warmup_rounds: int = int(config.get("spatial_warmup_rounds", config.get("warmup_rounds", 300)))
         self._current_round: int = 0
 
+        # Leaky rejection-rate memory (see class docstring)
+        self.reject_ema_rho: float = float(config.get("rep_reject_ema_rho", 0.20))
+        self.reject_ema_slash: float = float(config.get("rep_reject_ema_slash", 0.40))
+        self.reject_ema_recover_block: float = float(config.get("rep_reject_ema_recover_block", 0.30))
+        self.reject_ema: dict[int, float] = {cid: 0.0 for cid in client_ids}
+
         # Initialize streaks
         self.spatial_reject_streak: dict[int, int] = {cid: 0 for cid in client_ids}
         self.borderline_streak: dict[int, int] = {cid: 0 for cid in client_ids}
@@ -78,18 +99,40 @@ class ReputationManager:
             self.scores[cid]["P"] *= (1.0 - self.alpha_P)
             self.scores[cid]["P"] = max(self.min_integrity_floor, self.scores[cid]["P"])
 
+    def _bump_reject_ema(self, cid: int, rejected: bool) -> float:
+        """EMA update of the client's rejection rate; returns the new value."""
+        rho = self.reject_ema_rho
+        e = (1.0 - rho) * self.reject_ema.get(cid, 0.0) + (rho if rejected else 0.0)
+        self.reject_ema[cid] = e
+        return e
+
     def record_spatial_rejection(self, cid: int) -> None:
-        """Increments spatial reject streak. Applies integrity slash only if the streak
-        reaches or exceeds spatial_grace_k and post-warmup.
+        """Registers a spatial/behavioral rejection.
+
+        Slashes integrity if EITHER the consecutive-reject streak reaches spatial_grace_k
+        (protects honest clients from isolated false rejections, as before) OR the leaky
+        rejection rate has reached rep_reject_ema_slash (catches attackers that interleave
+        accepted updates to reset the streak). Slashing is still gated by the warmup horizon.
         """
         self.spatial_reject_streak[cid] += 1
-        if self.spatial_reject_streak[cid] >= self.spatial_grace_k:
+        ema = self._bump_reject_ema(cid, True)
+        if self.spatial_reject_streak[cid] >= self.spatial_grace_k or ema >= self.reject_ema_slash:
+            self.slash_integrity(cid)
+
+    def record_leaky_rejection(self, cid: int) -> None:
+        """Registers a rejection that bypasses the spatial streak (zero-gradient guard after
+        subspace damping, temporal-spam guard, quarantine expiry). Feeds only the leaky rate:
+        it never touches the consecutive streak, so honest grace behaviour is unchanged."""
+        ema = self._bump_reject_ema(cid, True)
+        if ema >= self.reject_ema_slash:
             self.slash_integrity(cid)
 
     def record_accepted_update(self, cid: int) -> None:
-        """Resets the spatial reject streak to 0 upon a successfully accepted update.
-        """
+        """Resets the spatial reject streak to 0 on an accepted/downweighted update and lets the
+        leaky rejection rate decay. The streak reset alone is NOT enough to clear a client:
+        recover() withholds the integrity bonus while the rejection rate is still high."""
         self.spatial_reject_streak[cid] = 0
+        self._bump_reject_ema(cid, False)
 
     def record_borderline_check(self, cid: int, sim: Optional[float]) -> None:
         """Tracks borderline streak for diagnostic telemetry.
@@ -105,10 +148,13 @@ class ReputationManager:
     # ------------------------------------------------------------------
 
     def recover(self, cid: int) -> None:
-        """Additive recovery on both scores after a successful accepted update.
-        Scores are capped at 1.0."""
+        """Additive recovery after a successful accepted update. Scores are capped at 1.0.
+
+        The integrity bonus is withheld while the client's recent rejection rate is high
+        (reject_ema >= rep_reject_ema_recover_block); pace recovery is unaffected."""
         s = self.scores[cid]
-        s["I"] = min(1.0, s["I"] + self.beta_I)
+        if self.reject_ema.get(cid, 0.0) < self.reject_ema_recover_block:
+            s["I"] = min(1.0, s["I"] + self.beta_I)
         s["P"] = min(1.0, s["P"] + self.beta_P)
 
     # ------------------------------------------------------------------

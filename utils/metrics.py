@@ -46,15 +46,53 @@ def compute_attack_success_rate(rejection_log: list[dict], byzantine_ids: set[in
     accepted = sum(1 for r in byz_submissions if r.get("status") in ["ACCEPT", "DOWNWEIGHT"])
     return accepted / len(byz_submissions)
 
+def compute_detection_breakdown(rejection_log: list[dict], byzantine_ids: set[int],
+                                exclude_warmup: bool = True) -> dict:
+    """Per-action breakdown for Byzantine submissions plus a REJECT-reason histogram.
+
+    ``compute_attack_success_rate`` lumps QUARANTINE in with "caught" and cannot say WHICH
+    defense fired. Use this to check each defense is alive: e.g. if
+    ``reject_reasons`` has no ``BOUNDARY_PINNING_REJECT`` for S2/ADAPTIVE, the pinning gate is
+    not firing. Warmup accepts are excluded by default (they accept everything by design).
+    """
+    rows = [r for r in rejection_log
+            if r.get("client_id") in byzantine_ids
+            and r.get("status") in ("ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT")
+            and not (exclude_warmup and r.get("reason") == "SPATIAL_WARMUP_ACCEPT")]
+    n = len(rows)
+    out = {"n_submissions": n}
+    for s in ("ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT"):
+        c = sum(1 for r in rows if r.get("status") == s)
+        out[s.lower()] = c
+        out[s.lower() + "_frac"] = (c / n) if n else 0.0
+    reasons: dict = {}
+    for r in rows:
+        if r.get("status") == "REJECT":
+            reasons[r.get("reason")] = reasons.get(r.get("reason"), 0) + 1
+    out["reject_reasons"] = dict(sorted(reasons.items(), key=lambda kv: -kv[1]))
+    # "Influence" rate: share of post-warmup Byzantine submissions that actually reached the model
+    out["influence_rate"] = ((out["accept"] + out["downweight"]) / n) if n else 0.0
+    return out
+
 def compute_false_rejection_rate(rejection_log: list[dict], honest_ids: set[int]) -> float:
     honest_submissions = [r for r in rejection_log if r.get("client_id") in honest_ids and r.get("status") in ["ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT"]]
     if not honest_submissions: return 0.0
     rejected = sum(1 for r in honest_submissions if r.get("status") == "REJECT")
     return rejected / len(honest_submissions)
 
-def compute_reputation_precision(rep_manager, byzantine_ids: set[int], threshold: float = 0.5) -> float:
+def compute_reputation_precision(rep_manager, byzantine_ids: set[int], threshold: float = 0.5,
+                                 use_composite: bool = False) -> float:
+    """Fraction of low-reputation clients that are truly Byzantine.
+
+    By default only the integrity score I is thresholded (original behaviour). Pass
+    ``use_composite=True`` to threshold I*P instead, which also surfaces clients that were only
+    penalised on pace (e.g. COMPOUND's T1 half before the leaky-rejection fix).
+    """
     all_client_ids = list(rep_manager.scores.keys())
-    low_rep = [cid for cid in all_client_ids if rep_manager.get(cid)[0] < threshold]
+    def _score(cid):
+        I, P = rep_manager.get(cid)
+        return I * P if use_composite else I
+    low_rep = [cid for cid in all_client_ids if _score(cid) < threshold]
     if not low_rep: return 1.0
     true_positives = sum(1 for cid in low_rep if cid in byzantine_ids)
     return true_positives / len(low_rep)

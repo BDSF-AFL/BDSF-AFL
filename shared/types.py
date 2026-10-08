@@ -70,6 +70,11 @@ class SpatialEvidence:
     tra_score: Optional[float] = None              # Temporal Residual Autocorrelation: cos(r_t, r_t-1)
     suspicion_score: float = 0.0                   # Multi-round suspicion accumulator S_i in [0.0, 1.0]
     oer_score: Optional[float] = None              # Orthogonal Energy Ratio: 1 - cos(delta_W, ref)^2
+    # Cosine to the reference measured on the RAW submission, i.e. BEFORE the subspace engine
+    # damps its orthogonal component. Attackers (S2 / ADAPTIVE) tune their cosine on the raw
+    # vector, so the raw value is the only one that still carries their pinning signature.
+    # sim_global (above) is measured on the post-subspace v_clean and is systematically higher.
+    sim_global_raw: Optional[float] = None
 
     def __post_init__(self):
         if self.spatial_mature is None:

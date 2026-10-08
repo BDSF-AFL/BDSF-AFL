@@ -235,7 +235,7 @@ class TestAggregatorSubspaceIntegration(unittest.TestCase):
         self.assertTrue(torch.allclose(server1.get_global_weights(), server2.get_global_weights()))
 
     def test_aggregator_csv_logger_records_full_modern_columns(self):
-        """Verifies that live handle_update calls write all 44 columns to CSV with non-null modern architecture fields."""
+        """Verifies that live handle_update calls write all 45 columns to CSV with non-null modern architecture fields."""
         import csv
         model = MNISTMLP()
         W_init = torch.cat([p.data.flatten() for p in model.parameters()]).float()
@@ -253,8 +253,8 @@ class TestAggregatorSubspaceIntegration(unittest.TestCase):
             header = reader[0]
             row = reader[1]
 
-        self.assertEqual(len(header), 44)
-        self.assertEqual(len(row), 44)
+        self.assertEqual(len(header), 45)
+        self.assertEqual(len(row), 45)
         header_map = {name: idx for idx, name in enumerate(header)}
         
         # Ground truth label must be True for client 1

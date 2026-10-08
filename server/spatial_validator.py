@@ -42,7 +42,14 @@ class SpatialValidator:
 
         # Stores (client_id, residual_vector) tuples from recent accepted updates.
         # The residual is the component of delta_W orthogonal to the consensus reference.
-        # Honest clients share structured residuals (same task); S2 mimicry has random residuals.
+        # Honest clients share structured residuals (same task).
+        # NOTE (threat-model change): PRC/TRA were designed against the ORIGINAL S2 attack, which
+        # added a random orthogonal perturbation (so its residual looked like noise). The current
+        # S2/ADAPTIVE attacks only move along -r_hat, which leaves the orthogonal residual
+        # IDENTICAL to the honest one (cos = 1.0 in our check). PRC/TRA therefore cannot detect
+        # them any more; they still detect random-direction attackers (T1, old S2). Detection of
+        # the along-reference attacks relies on the raw-cosine boundary-pinning gate in
+        # decision_engine.py (Priority 1c) and on the leaky rejection reputation.
         self.prc_buffer_k: int = config.get("prc_buffer_k", 10)
         self._residual_buffer: deque[tuple[int, torch.Tensor]] = deque(maxlen=self.prc_buffer_k)
         # Per-client last residual vector for Temporal Residual Autocorrelation (TRA)
@@ -70,7 +77,8 @@ class SpatialValidator:
         
         For honest clients training on overlapping classes, this residual captures
         class-specific gradient structure that is correlated across clients.
-        For S2 mimicry, this residual is the random ε·v⊥ injected each round.
+        For random-direction attackers (T1, legacy S2) this residual is noise.
+        For the current along-reference S2/ADAPTIVE attacks it equals the honest residual.
         """
         ref_norm_sq = torch.dot(ref_flat, ref_flat).item()
         if ref_norm_sq < EPS:
@@ -94,7 +102,10 @@ class SpatialValidator:
         Mathematical basis:
         - Honest non-IID: residual captures class-specific gradient structure that matches
           other clients sharing those classes → max cross-client residual similarity > 0.30.
-        - S2 Mimicry: residual = ε·v⊥ where v⊥ is random in 11M dimensions → PRC ≈ 0.
+        - Random-direction attackers (T1, legacy orthogonal S2): residual is random in ~11M
+          dimensions → PRC ≈ 0.
+        - Current S2/ADAPTIVE (move along -r_hat only): residual == honest residual → PRC looks
+          honest. This score does NOT detect them (see __init__ note).
         """
         residual = self._compute_residual(dW_flat, ref_flat)
         if residual is None:
@@ -119,7 +130,8 @@ class SpatialValidator:
         
         TRA = cos(r_{i, t}, r_{i, t-1}).
         Honest clients exhibit TRA >= 0.60-0.95 (persistent class gradient structure).
-        S2 Mimicry exhibits TRA ≈ 0.00-0.15 (independent random Gaussian noise).
+        Random-direction attackers exhibit TRA ≈ 0.00-0.15 (independent random noise).
+        Current S2/ADAPTIVE keep the honest residual, so their TRA is honest-like too.
         """
         if client_id in self._client_last_residual:
             last_r = self._client_last_residual[client_id]
@@ -145,8 +157,34 @@ class SpatialValidator:
     # Evidence Extraction
     # ------------------------------------------------------------------
 
-    def extract_evidence(self, delta_W: torch.Tensor, client_id: int = -1) -> SpatialEvidence:
-        """Extracts continuous spatial evidence without modifying state."""
+    def raw_cosine(self, raw_delta_W: torch.Tensor) -> Optional[float]:
+        """Cosine similarity between a RAW (pre-subspace-filter) submission and the Top-K
+        reference. Returns None while the reference is unavailable or either norm is ~0.
+
+        Why this exists: the subspace engine damps the orthogonal part of every update before
+        evidence extraction, which raises the measured cosine of honest clients and attackers
+        alike and destroys the constant-cosine signature of boundary-pinning attackers. This
+        method restores the un-laundered value. It does not modify any state.
+        """
+        ref, ref_count, _ = self._build_reference_stats()
+        if ref is None or ref_count < self.K_ref:
+            return None
+        v = raw_delta_W.flatten().float()
+        r = ref.flatten().float()
+        nv = torch.norm(v).item()
+        nr = torch.norm(r).item()
+        if nv <= EPS or nr <= EPS or not np.isfinite(nv) or not np.isfinite(nr):
+            return None
+        return float(torch.dot(v, r).item() / (nv * nr))
+
+    def extract_evidence(self, delta_W: torch.Tensor, client_id: int = -1,
+                         raw_delta_W: Optional[torch.Tensor] = None) -> SpatialEvidence:
+        """Extracts continuous spatial evidence without modifying state.
+
+        ``delta_W`` is the (possibly subspace-filtered) update used for gating.
+        ``raw_delta_W`` is the submission as the client sent it; when given, its cosine to the
+        reference is reported as ``sim_global_raw`` for the boundary-pinning gate.
+        """
         ref, ref_count, coherence = self._build_reference_stats()
         n_unique = len(self._unique_accepted_clients)
         min_unique = max(self.K_ref, self.config.get("N_clients", 20) // 2)
@@ -180,6 +218,7 @@ class SpatialValidator:
                 tra_score = self._compute_tra(client_id, residual)
 
         oer_score = (1.0 - sim_global ** 2) if sim_global is not None else None
+        sim_global_raw = self.raw_cosine(raw_delta_W) if raw_delta_W is not None else None
 
         # Static vs Adaptive warmup vs Adaptive mature
         if not self.use_adaptive_clip:
@@ -217,6 +256,7 @@ class SpatialValidator:
             prc_score=prc_score,
             tra_score=tra_score,
             oer_score=oer_score,
+            sim_global_raw=sim_global_raw,
         )
 
     # ------------------------------------------------------------------

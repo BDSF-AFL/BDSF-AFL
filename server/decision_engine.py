@@ -17,7 +17,8 @@ class JointDecisionEngine:
       - Phase 0: Universal Hard Safety Pre-Checks (Zero norm, Norm Explosion > 3x C_t)
       - Phase 1: Observation Warmup Horizon (Rounds 0 - warmup_rounds / 300 updates)
       - Phase 2: Post-Warmup Active Defense:
-          - Priority 1: Invariant Hard Violations (Global Directional Inversion, Temporal Spam/Straggler)
+          - Priority 1: Invariant Hard Violations (Global Directional Inversion, Temporal Spam/Straggler,
+                        Boundary Pinning on the RAW cosine -- primary S2/ADAPTIVE defense)
           - Priority 2: Full Consensus Acceptance (sim_g >= theta_cos, clean TRS & suspicion)
           - Priority 3: Trajectory Rigidity Rejection (TRS >= trs_reject_thresh — Primary Mimicry/Compound Defense)
           - Priority 4: Non-IID Honest Soft-Filtering (DOWNWEIGHT with dynamic attenuation & drift bounding)
@@ -75,7 +76,18 @@ class JointDecisionEngine:
         self.bisection_window: int = int(config.get("bisection_window", 4))
         self.bisection_variance_thresh: float = float(config.get("bisection_variance_thresh", 0.00005))
         self.bisection_band_margin: float = float(config.get("bisection_band_margin", 0.10))
+        # Rolling window of the client's most recent RAW cosines (all values, kept for diagnostics).
         self.sim_g_history: dict[int, deque] = {}
+        # Rolling window holding ONLY the client's raw cosines that fell inside the boundary band
+        # [theta_cos - 0.02, theta_cos + bisection_band_margin]. The pinning test runs on this
+        # window, so a COMPOUND attacker that interleaves T1 noise (cos ~ 0) with S2 (cos pinned
+        # at theta_cos + margin) is still seen: the T1 samples no longer dilute the variance.
+        self.band_sim_history: dict[int, deque] = {}
+        # If True, consensus-exemption tests use the RAW cosine (when available) instead of the
+        # subspace-filtered one. The subspace engine raises every client's cosine, which would
+        # otherwise lift boundary-pinning attackers above theta_cos + trs_consensus_margin and
+        # switch off the TRS rejection for them.
+        self.exempt_use_raw_sim: bool = bool(config.get("exempt_use_raw_sim", True))
 
     def evaluate(
         self,
@@ -99,11 +111,22 @@ class JointDecisionEngine:
             effective_theta_cos = self.theta_cos
 
         sim_g = spatial_ev.sim_global
-        # Track per-client sim_global history for bisection variance detection (active across all rounds)
-        if sim_g is not None:
+        # RAW cosine (pre-subspace-damping). Falls back to sim_g when the aggregator did not supply
+        # it (unit tests, subspace disabled / cold start, baselines), so behaviour is unchanged there.
+        sim_raw = getattr(spatial_ev, "sim_global_raw", None)
+        sim_pin = sim_raw if sim_raw is not None else sim_g
+        sim_exempt = sim_pin if self.exempt_use_raw_sim else sim_g
+
+        # Track per-client RAW cosine history for boundary-pinning detection (active across all
+        # rounds, including warmup, so the gate can fire on the first post-warmup update).
+        if sim_pin is not None:
             if cid not in self.sim_g_history:
                 self.sim_g_history[cid] = deque(maxlen=self.bisection_window)
-            self.sim_g_history[cid].append(float(sim_g))
+            self.sim_g_history[cid].append(float(sim_pin))
+            if (self.theta_cos - 0.02) <= sim_pin <= (self.theta_cos + self.bisection_band_margin):
+                if cid not in self.band_sim_history:
+                    self.band_sim_history[cid] = deque(maxlen=self.bisection_window)
+                self.band_sim_history[cid].append(float(sim_pin))
 
         sim_s_mean = behavioral_ev.sim_self_mean
         sim_s_max = behavioral_ev.sim_self_max
@@ -203,8 +226,8 @@ class JointDecisionEngine:
 
         is_consensus_exempt = (
             self.trs_consensus_exempt and
-            sim_g is not None and
-            sim_g >= (effective_theta_cos + self.trs_consensus_margin)
+            sim_exempt is not None and
+            sim_exempt >= (effective_theta_cos + self.trs_consensus_margin)
         )
         is_consensus_aligned = (
             (sim_g is not None and sim_g >= effective_theta_cos) and
@@ -287,14 +310,23 @@ class JointDecisionEngine:
                     }
                 )
 
-        # 1c. Deterministic Anti-Bisection Rejection Gate (S2 Mimicry & Adaptive Detection)
-        if len(self.sim_g_history.get(cid, [])) >= self.bisection_window:
-            history = list(self.sim_g_history[cid])
+        # 1c. Deterministic Boundary-Pinning Rejection Gate (S2 Mimicry & Adaptive Detection)
+        # An honest client's cosine to the consensus drifts with its data and SGD noise. S2 and
+        # ADAPTIVE instead solve for the largest push against the reference that still clears
+        # theta_cos + margin, so their RAW cosine sits at (almost exactly) the same value every
+        # round. The test therefore (a) uses the raw cosine, because the subspace engine rescales
+        # the orthogonal part by a per-round factor and would hide the pinning, and (b) looks only
+        # at the client's in-band samples, so interleaved off-band submissions (COMPOUND's T1
+        # noise) cannot dilute the variance. Honest clients hovering in the band naturally show
+        # variance well above the threshold -- calibrate bisection_variance_thresh on honest logs.
+        band_hist = self.band_sim_history.get(cid, [])
+        in_band_now = (sim_pin is not None and
+                       (self.theta_cos - 0.02) <= sim_pin <= (self.theta_cos + self.bisection_band_margin))
+        if in_band_now and len(band_hist) >= self.bisection_window:
+            history = list(band_hist)
             var_g = float(np.var(history))
             mean_g = float(np.mean(history))
-            # Border band around acceptance threshold: [theta_cos - 0.02, theta_cos + bisection_band_margin]
-            is_on_boundary = (self.theta_cos - 0.02) <= mean_g <= (self.theta_cos + self.bisection_band_margin)
-            if is_on_boundary and var_g <= self.bisection_variance_thresh:
+            if var_g <= self.bisection_variance_thresh:
                 return JointDecisionOutcome(
                     action="REJECT",
                     primary_reason="BOUNDARY_PINNING_REJECT",
@@ -307,6 +339,7 @@ class JointDecisionEngine:
                         "var_sim_g": var_g,
                         "window": len(history),
                         "sim_g": sim_g,
+                        "sim_g_raw": sim_raw,
                         "sim_frozen_anchor": sim_frozen,
                         "anchor_drift": drift_a,
                     }
@@ -374,7 +407,7 @@ class JointDecisionEngine:
             (sim_g is not None and sim_g >= -self.theta_floor)
         )
         is_trs_reject_applicable = (not self.trs_consensus_exempt) or (
-            (sim_g is None or sim_g < (effective_theta_cos + self.trs_consensus_margin)) and not is_minority_candidate
+            (sim_exempt is None or sim_exempt < (effective_theta_cos + self.trs_consensus_margin)) and not is_minority_candidate
         )
         if trs is not None and trs >= self.trs_reject_thresh and depth >= self.trs_min_depth and is_trs_reject_applicable:
             return JointDecisionOutcome(
@@ -518,7 +551,7 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 6: Adversarial / Inconsistent Fallthrough (REJECT & SLASH)
         # ---------------------------------------------------------------------
-        if trs is not None and trs >= self.trs_reject_thresh and ((not self.trs_consensus_exempt) or (sim_g is None or sim_g < (effective_theta_cos + self.trs_consensus_margin))):
+        if trs is not None and trs >= self.trs_reject_thresh and ((not self.trs_consensus_exempt) or (sim_exempt is None or sim_exempt < (effective_theta_cos + self.trs_consensus_margin))):
             primary_reason = "TRAJECTORY_RIGIDITY_REJECT"
         elif S_i >= self.suspicion_reject_thresh:
             primary_reason = "PROGRESSIVE_SUSPICION_TRAJECTORY_REJECT"

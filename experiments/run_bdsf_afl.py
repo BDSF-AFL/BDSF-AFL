@@ -107,6 +107,13 @@ def run_single_experiment(config: dict, attack_type: str, seed: int, mode: str =
     print(f"  Attack Success Rate (ASR) : {ASR * 100:.2f}% (Target: 0% on Byzantine)")
     print(f"  True Positive Rate (TPR)  : {(1.0 - ASR) * 100:.2f}%")
     print(f"  Reputation Precision      : {rep_precision * 100:.2f}%")
+    if rep_manager:
+        rep_precision_ip = metrics.compute_reputation_precision(rep_manager, byz_ids, threshold=0.5, use_composite=True)
+        print(f"  Reputation Precision (I*P): {rep_precision_ip * 100:.2f}%")
+    _bd = metrics.compute_detection_breakdown(rejection_log, byz_ids)
+    print(f"  Byzantine influence rate  : {_bd['influence_rate'] * 100:.2f}% "
+          f"(accept={_bd['accept']}, downweight={_bd['downweight']}, quarantine={_bd['quarantine']}, reject={_bd['reject']})")
+    print(f"  Byzantine REJECT reasons  : {_bd['reject_reasons']}")
     print(f"  Convergence Round         : {convergence_time if convergence_time != float('inf') else 'N/A'}")
 
     if not df.empty and action_col in df.columns:
