@@ -113,6 +113,21 @@ cert_tra_min: 0.30
 # ~15-20, i.e. a legacy factor of ~0.22-0.25 on honest and Byzantine updates alike, BEFORE any defence logic.
 staleness_exponent: 0.5
 staleness_floor: 0.0
+# Relative staleness: discount only lag ABOVE the recent population median lag (typical-lag clients get 1.0).
+# Absolute staleness at lag~16 is a uniform ~0.24 learning-rate cut that cannot tell honest from Byzantine.
+staleness_relative: true
+staleness_ref_window: 60
+staleness_ref_min: 10
+
+# P4 manifold boost: non-IID honest clients (sim_g < 0, so no certificate) that sit inside the consensus subspace
+# (mu/rho_par/prc/tra above the cert_* floors), have no pinning evidence and suspicion < 0.30 are DOWNWEIGHTed at
+# max(alpha_eff, p4_manifold_weight) instead of ~0.3. They still stay out of the accepted buffer / consensus basis.
+p4_manifold_weight: 0.60
+
+# Population-wide straggler shock: if >= this many OTHER distinct clients already violated the upper temporal fence
+# within the last straggler_shock_window evaluations, the hard straggler guard is waived (0 = off).
+straggler_shock_min_clients: 2
+straggler_shock_window: 40
 
 # Leaky rejection memory (reputation). Replaces "3 consecutive rejects" as the ONLY slash trigger,
 # which COMPOUND (reject/accept alternation) bypassed forever.

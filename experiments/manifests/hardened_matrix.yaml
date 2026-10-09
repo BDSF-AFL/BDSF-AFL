@@ -23,7 +23,7 @@ experiment:
   theta_anchor_min: 0.25
   theta_anchor_mature: 0.25
   theta_cos: 0.15
-  stochastic_jitter_max: 0.04
+  stochastic_jitter_max: 0.08
   adaptive_clip_enabled: true
   gamma_clip: 1.10
   theta_prc: 0.20
@@ -67,9 +67,8 @@ experiment:
   subspace_m_perp_base: 2.0
   subspace_mu_floor: 0.10
   subspace_energy_floor: 0.40
-  subspace_damp_reject_floor: 0.02
-  bisection_window: 6
-  bisection_variance_thresh: 0.0001
+  bisection_window: 4
+  bisection_variance_thresh: 0.00005
   bisection_band_margin: 0.10
   pin_mass_tol: 0.0015
   pin_mass_min: 3
@@ -88,6 +87,12 @@ experiment:
   rep_reject_ema_rho: 0.20
   rep_reject_ema_slash: 0.40
   rep_reject_ema_recover_block: 0.30
+  staleness_relative: true
+  staleness_ref_window: 60
+  staleness_ref_min: 10
+  p4_manifold_weight: 0.60
+  straggler_shock_min_clients: 2
+  straggler_shock_window: 40
 
   algorithms:
     - "Proposed_BDSF_AFL"

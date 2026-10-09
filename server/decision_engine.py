@@ -135,6 +135,35 @@ class JointDecisionEngine:
         # already scales EVERY decision weight (honest included) to ~1/sqrt(N) before any defence logic.
         self.staleness_exponent: float = float(config.get("staleness_exponent", 0.5))
         self.staleness_floor: float = float(config.get("staleness_floor", 0.0))
+        # Relative staleness (default OFF = legacy). In a round-robin async setup EVERY client is ~N-1
+        # versions behind, so the absolute factor is just a global learning-rate cut (~0.24 at lag 16)
+        # that carries no information about who is stale. With staleness_relative the lag is measured
+        # against the median lag of the recent population: only clients that are staler than their
+        # peers are discounted; typical-lag clients get 1.0.
+        self.staleness_relative: bool = bool(config.get("staleness_relative", False))
+        self.staleness_ref_window: int = int(config.get("staleness_ref_window", 60))
+        self.staleness_ref_min: int = int(config.get("staleness_ref_min", 10))
+        self._lag_hist: deque = deque(maxlen=self.staleness_ref_window)
+
+        # --- P4 manifold boost (default OFF) -----------------------------------------------------------
+        # A non-IID honest client has negative/low cosine to the global reference (sim_g < 0 so it can
+        # never hold the certificate) but sits inside the consensus subspace (mu, rho_par) with coherent
+        # residuals and no boundary-pinning evidence. It stays a DOWNWEIGHT (so it is still kept out of the
+        # accepted buffer / consensus basis) but at max(alpha_eff, p4_manifold_weight) instead of ~0.3.
+        self.p4_manifold_weight: float = float(config.get("p4_manifold_weight", 0.0))
+
+        # --- Population-wide straggler shock (default OFF) ---------------------------------------------
+        # A simulated-clock / scheduler stall makes EVERY client's gap g_i blow past the upper fence at
+        # once. That is a server-side event, not misbehaviour of each client; rejecting them all (and
+        # force-syncing them) wipes out a whole round of honest work. If at least
+        # straggler_shock_min_clients OTHER distinct clients violated the upper fence within the last
+        # straggler_shock_window evaluations, the hard straggler guard is waived for this client and its
+        # gap is not recorded into the fence history (aggregator reads last_shock_exempt).
+        self.straggler_shock_min_clients: int = int(config.get("straggler_shock_min_clients", 0))
+        self.straggler_shock_window: int = int(config.get("straggler_shock_window", 40))
+        self._straggler_events: deque = deque(maxlen=max(1, self.straggler_shock_window))
+        self._eval_counter: int = 0
+        self.last_shock_exempt: bool = False
 
     def evaluate(
         self,
@@ -212,7 +241,26 @@ class JointDecisionEngine:
 
         v_lag = version_lag if version_lag != 0 else getattr(temporal_ev, "version_lag", 0)
         # Asynchronous Staleness Penalty Matrix: dampens variance window of delayed gradients
-        staleness_factor = max(self.staleness_floor, (1.0 + max(0, v_lag)) ** (-self.staleness_exponent))
+        eff_lag = max(0, v_lag)
+        if self.staleness_relative:
+            if len(self._lag_hist) >= self.staleness_ref_min:
+                ref_lag = float(sorted(self._lag_hist)[len(self._lag_hist) // 2])
+                eff_lag = max(0.0, eff_lag - ref_lag)
+            self._lag_hist.append(float(max(0, v_lag)))
+        staleness_factor = max(self.staleness_floor, (1.0 + eff_lag) ** (-self.staleness_exponent))
+
+        # Population-wide straggler shock detection (see __init__)
+        self._eval_counter += 1
+        self.last_shock_exempt = False
+        if (self.straggler_shock_min_clients > 0 and temporal_ev.temporal_mature and
+                temporal_ev.upper_fence is not None and temporal_ev.g_i > temporal_ev.upper_fence and
+                temporal_ev.fence_margin > self.delta_temp_mod):
+            others = {c for (n, c) in self._straggler_events
+                      if c != cid and self._eval_counter - n <= self.straggler_shock_window}
+            self._straggler_events.append((self._eval_counter, cid))
+            if len(others) >= self.straggler_shock_min_clients:
+                self.last_shock_exempt = True
+                g_margin = 0.0
         sim_frozen = getattr(behavioral_ev, "sim_frozen_anchor", None)
         drift_a = getattr(behavioral_ev, "anchor_drift", None)
         gdv = getattr(behavioral_ev, "gdv_score", None)
@@ -606,6 +654,16 @@ class JointDecisionEngine:
 
             conf_factor = min(1.0, max(0.2, (1.0 - S_i) * (sim_s - self.theta_self) / (1.0 - self.theta_self + 1e-6)))
             alpha_eff = self.alpha_downweight * conf_factor
+            manifold_boost = bool(
+                self.p4_manifold_weight > 0.0 and S_i < 0.30 and
+                not pin_suspect and not pin_thin_record and
+                (sim_pin is None or sim_pin >= -self.theta_floor) and
+                subspace_mu is not None and subspace_rho_parallel is not None and
+                subspace_mu >= self.cert_mu_min and subspace_rho_parallel >= self.cert_rho_min and
+                (prc is None or prc >= self.cert_prc_min) and (tra is None or tra >= self.cert_tra_min)
+            )
+            if manifold_boost:
+                alpha_eff = max(alpha_eff, self.p4_manifold_weight)
             reason = "PROGRESSIVE_SUSPICION_DOWNWEIGHT" if S_i >= 0.30 else "NON_IID_HONEST_CONSISTENCY"
             return JointDecisionOutcome(
                 action="DOWNWEIGHT",
@@ -617,6 +675,7 @@ class JointDecisionEngine:
                     "c_dw": c_dw,
                     "theta_self_eff": theta_self_eff,
                     "alpha_eff": alpha_eff,
+                    "manifold_boost": manifold_boost,
                     "sim_anchor": behavioral_ev.sim_anchor,
                     "sim_frozen_anchor": sim_frozen,
                     "anchor_drift": drift_a,
@@ -721,10 +780,12 @@ class JointDecisionEngine:
             # restarts every client's pinning evidence from zero.
             "sim_g_history": {int(k): [float(x) for x in v] for k, v in self.sim_g_history.items()},
             "band_sim_history": {int(k): [float(x) for x in v] for k, v in self.band_sim_history.items()},
+            "lag_hist": [float(x) for x in self._lag_hist],
         }
 
     def load_state(self, state: dict) -> None:
         """Restores decision engine state from checkpoint."""
+        self._lag_hist = deque([float(x) for x in state.get("lag_hist", [])], maxlen=self.staleness_ref_window)
         self.suspicion_scores = {int(k): float(v) for k, v in state.get("suspicion_scores", {}).items()}
         self.sim_g_history = {
             int(k): deque([float(x) for x in v], maxlen=self.bisection_window)

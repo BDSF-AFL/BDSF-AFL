@@ -192,5 +192,102 @@ class TestState(unittest.TestCase):
         self.assertEqual(e.suspicion_scores, {1: 0.2})
 
 
+def temp_gap(g, lag=0, upper=15.0, margin=None):
+    m = (g - upper) / 15.0 if margin is None else margin
+    return TemporalEvidence(g_i=g, lower_fence=0.0, upper_fence=upper, fence_margin=max(0.0, m),
+                            client_z_score=0.0, is_burn_in=False, temporal_mature=True, version_lag=lag)
+
+
+class TestRelativeStaleness(unittest.TestCase):
+    def _run(self, lags, **over):
+        eng = JointDecisionEngine(base_cfg(staleness_relative=True, staleness_ref_min=5, **over))
+        out = None
+        for i, lag in enumerate(lags):
+            out = eng.evaluate(0, TEMP, spat(0.40), behav(0.5), 1.0, 1.0, current_round=i,
+                               version_lag=lag, subspace_mu=0.3, subspace_rho_parallel=0.8)
+        return out.aggregation_weight
+
+    def test_typical_lag_is_not_discounted(self):
+        self.assertAlmostEqual(self._run([16] * 8), 1.0, places=6)
+
+    def test_only_lag_above_population_median_is_discounted(self):
+        w = self._run([16] * 8 + [24])           # 8 over the median of 16
+        self.assertAlmostEqual(w, 9 ** -0.5, places=6)
+
+    def test_fresher_than_median_is_capped_at_one(self):
+        self.assertAlmostEqual(self._run([16] * 8 + [2]), 1.0, places=6)
+
+    def test_legacy_default_unchanged(self):
+        eng = JointDecisionEngine(base_cfg())
+        self.assertFalse(eng.staleness_relative)
+
+    def test_lag_history_survives_checkpoint(self):
+        a = JointDecisionEngine(base_cfg(staleness_relative=True, staleness_ref_min=5))
+        for i in range(8):
+            a.evaluate(0, TEMP, spat(0.40), behav(0.5), 1.0, 1.0, current_round=i, version_lag=16,
+                       subspace_mu=0.3, subspace_rho_parallel=0.8)
+        b = JointDecisionEngine(base_cfg(staleness_relative=True, staleness_ref_min=5))
+        b.load_state(a.get_state())
+        out = b.evaluate(0, TEMP, spat(0.40), behav(0.5), 1.0, 1.0, current_round=9, version_lag=16,
+                         subspace_mu=0.3, subspace_rho_parallel=0.8)
+        self.assertAlmostEqual(out.aggregation_weight, 1.0, places=6)
+
+
+class TestP4ManifoldBoost(unittest.TestCase):
+    def _out(self, **over):
+        eng = JointDecisionEngine(base_cfg(trs_consensus_exempt=True, **over))   # production setting: anchor-consistent minority is TRS-exempt
+        out = None
+        for i, r in enumerate(HONEST_SPREAD):
+            out = eng.evaluate(9, TEMP, spat(-0.09, filt=-0.10, prc=0.40, tra=0.9), behav(0.93), 1.0, 1.0,
+                               current_round=i, subspace_mu=0.21, subspace_rho_parallel=0.85)
+        return out
+
+    def test_off_by_default(self):
+        out = self._out()
+        self.assertEqual(out.primary_reason, "NON_IID_HONEST_CONSISTENCY")
+        self.assertLess(out.aggregation_weight, 0.36)
+
+    def test_boost_raises_weight_but_stays_downweight(self):
+        out = self._out(p4_manifold_weight=0.6)
+        self.assertEqual(out.action, "DOWNWEIGHT")
+        self.assertGreaterEqual(out.aggregation_weight, 0.6 - 1e-9)
+        self.assertTrue(out.diagnostic_features["manifold_boost"])
+
+    def test_no_boost_without_manifold_evidence(self):
+        eng = JointDecisionEngine(base_cfg(trs_consensus_exempt=True, p4_manifold_weight=0.6))
+        out = None
+        for i in range(5):
+            out = eng.evaluate(9, TEMP, spat(-0.09, filt=-0.10, prc=0.40, tra=0.9), behav(0.93), 1.0, 1.0,
+                               current_round=i, subspace_mu=0.01, subspace_rho_parallel=0.2)
+        self.assertFalse(out.diagnostic_features.get("manifold_boost", False))
+
+
+class TestStragglerShock(unittest.TestCase):
+    def _burst(self, min_clients, n=6):
+        eng = JointDecisionEngine(base_cfg(straggler_shock_min_clients=min_clients, delta_temp_mod=0.5))
+        outs = []
+        for c in range(n):
+            outs.append(eng.evaluate(c, temp_gap(40.0), spat(0.40), behav(0.5), 1.0, 1.0, current_round=c,
+                                     subspace_mu=0.3, subspace_rho_parallel=0.8))
+        return eng, outs
+
+    def test_legacy_rejects_every_client_in_burst(self):
+        _, outs = self._burst(0)
+        self.assertTrue(all(o.primary_reason == "HARD_GUARD_TEMPORAL_STRAGGLER" for o in outs))
+
+    def test_population_shock_waives_guard_after_min_clients(self):
+        eng, outs = self._burst(2)
+        self.assertEqual([o.primary_reason for o in outs[:2]], ["HARD_GUARD_TEMPORAL_STRAGGLER"] * 2)
+        self.assertTrue(all(o.action != "REJECT" or o.primary_reason != "HARD_GUARD_TEMPORAL_STRAGGLER" for o in outs[2:]))
+        self.assertTrue(eng.last_shock_exempt)
+
+    def test_single_straggler_is_still_rejected(self):
+        eng = JointDecisionEngine(base_cfg(straggler_shock_min_clients=2, delta_temp_mod=0.5))
+        for r in range(10):                     # many evaluations of a lone straggler: same client never counts as "others"
+            out = eng.evaluate(0, temp_gap(40.0), spat(0.40), behav(0.5), 1.0, 1.0, current_round=r,
+                               subspace_mu=0.3, subspace_rho_parallel=0.8)
+            self.assertEqual(out.primary_reason, "HARD_GUARD_TEMPORAL_STRAGGLER")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

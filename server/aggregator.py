@@ -520,7 +520,8 @@ class AggregatorServer:
                 self.accepted_buffer.append(entry)
                 self.spatial_validator.on_accept(entry)
                 self.spatial_validator.record_residual(cid, delta_W_clipped)
-                self.temporal_filter.record_gap(g_i, cid)
+                if not getattr(self.decision_engine, "last_shock_exempt", False):
+                    self.temporal_filter.record_gap(g_i, cid)   # a clock-stall gap must not widen the fences
 
                 # Consensus Basis Q Admission Policy (Council Approved):
                 # 1. Early Warmup: Zero admission to Q (Q stays clean, no Trojan basis)
@@ -647,7 +648,8 @@ class AggregatorServer:
                     self.spatial_validator.on_accept(entry)
                     self.spatial_validator.record_residual(cid, delta_W_clipped)
                     self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True, is_warmup=False)
-                self.temporal_filter.record_gap(g_i, cid)
+                if not getattr(self.decision_engine, "last_shock_exempt", False):
+                    self.temporal_filter.record_gap(g_i, cid)   # a clock-stall gap must not widen the fences
 
                 if is_pin_suspect:
                     # Strong evidence (repeated mass-point hits) is charged to the leaky rejection rate;
