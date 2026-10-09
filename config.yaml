@@ -83,6 +83,37 @@ exempt_use_raw_sim: true         # consensus-exemption (TRS bypass) uses raw cos
 stochastic_jitter_max: 0.04      # explicit now (was an undocumented code default); S2 targets theta_cos+0.05
 subspace_damp_reject_floor: 0.02 # Gate-2 w_damp below this => spatial REJECT (T1 noise), 0 disables
 
+# Boundary-steering detection v2 (S2 / ADAPTIVE) -- see decision_engine.py Priority 1c / 1d
+# Mass point: if >= pin_mass_min earlier in-band raw cosines of this client sit within pin_mass_tol of
+# the current one, it is steering to a fixed boundary value (S2 lands on theta_cos+0.05 to ~1e-6).
+# Unlike the variance gate it survives interleaved unattacked dips, and fires after 3 samples, not 6.
+pin_mass_tol: 0.0015
+pin_mass_min: 3
+# Probation: in-band submissions with a thin record (< pin_probation_min_samples in-band samples) or with
+# mass-point / narrow-spread evidence are admitted at pin_probation_weight instead of full weight.
+# Suspects are also kept out of the reference buffer and charged to the leaky rejection rate.
+pin_probation_enabled: true
+pin_probation_min_samples: 2
+pin_probation_weight: 0.15
+pin_suspect_nn: 0.008      # suspect if 2nd-nearest earlier in-band sample is closer than this
+pin_suspect_min_hits: 1
+pin_strong_hits: 2         # strong suspects are also charged to the leaky rejection rate
+
+# Honest-convergence certificate: manifold evidence (mu, rho_parallel) + coherent residuals + NO
+# boundary-steering evidence => exempt from every TRS-driven branch (P2 gate, suspicion, P3 reject, P4).
+# TRS measures client self-consistency, which genuinely converging non-IID clients have by construction.
+honest_cert_enabled: true
+cert_mu_min: 0.05
+cert_rho_min: 0.40
+cert_prc_min: 0.10
+cert_tra_min: 0.30
+
+# Async staleness weight = max(staleness_floor, (1 + version_lag) ** -staleness_exponent), applied to EVERY
+# decision weight. Legacy = exponent 0.5, floor 0.0. With 20 clients cycling asynchronously the typical lag is
+# ~15-20, i.e. a legacy factor of ~0.22-0.25 on honest and Byzantine updates alike, BEFORE any defence logic.
+staleness_exponent: 0.5
+staleness_floor: 0.0
+
 # Leaky rejection memory (reputation). Replaces "3 consecutive rejects" as the ONLY slash trigger,
 # which COMPOUND (reject/accept alternation) bypassed forever.
 rep_reject_ema_rho: 0.20         # EMA step for the per-client rejection rate

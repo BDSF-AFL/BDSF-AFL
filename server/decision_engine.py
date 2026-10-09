@@ -89,6 +89,53 @@ class JointDecisionEngine:
         # switch off the TRS rejection for them.
         self.exempt_use_raw_sim: bool = bool(config.get("exempt_use_raw_sim", True))
 
+        # --- Boundary-pinning "mass point" gate (fast S2 / ADAPTIVE detection) -------------------
+        # S2 searches for the largest push against the reference that still leaves
+        # cos = theta_cos + margin, so every attacked submission lands on the SAME value. The
+        # variance gate above needs bisection_window in-band samples AND a clean window: a single
+        # unattacked dip (honest cos < target is submitted unmodified) breaks it, which is how
+        # attackers kept getting FULL_CONSENSUS_ACCEPT. A mass point needs no clean window: if
+        # >= pin_mass_min of the client's previous in-band raw cosines sit within pin_mass_tol of
+        # the current one, the client is steering to a fixed boundary value. 0 disables.
+        self.pin_mass_tol: float = float(config.get("pin_mass_tol", 0.0015))
+        self.pin_mass_min: int = int(config.get("pin_mass_min", 3))
+        # Probation: an in-band submission from a client whose in-band record is too short to
+        # tell honest from boundary-steering (or that already shows mass-point / narrow-spread
+        # evidence) is NOT given full weight. Off by default (legacy behaviour).
+        self.pin_probation_enabled: bool = bool(config.get("pin_probation_enabled", False))
+        self.pin_probation_min_samples: int = int(config.get("pin_probation_min_samples", 3))
+        self.pin_probation_weight: float = float(config.get("pin_probation_weight", 0.30))
+        # Suspect = >= pin_suspect_min_hits earlier in-band samples on this value (within pin_mass_tol)
+        # OR its 2nd-nearest earlier in-band sample is closer than pin_suspect_nn. The neighbour-distance
+        # test (not a window std) is deliberate: an attacker's unattacked in-band dips would otherwise
+        # inflate the window spread and hide the cluster it keeps returning to.
+        self.pin_suspect_nn: float = float(config.get("pin_suspect_nn", 0.008))
+        self.pin_suspect_min_hits: int = int(config.get("pin_suspect_min_hits", 1))
+        # Strong = this many mass-point hits; strong suspects are also charged to the leaky rejection rate.
+        self.pin_strong_hits: int = int(config.get("pin_strong_hits", 2))
+
+        # --- Honest-convergence certificate -------------------------------------------------------
+        # Trajectory rigidity (TRS = DBP * (1 - GDV)) measures how self-consistent a client's own
+        # accepted history is. Honest non-IID clients that are genuinely converging are exactly
+        # that, and the along-reference attackers (S2/ADAPTIVE) are NOT rigid in this sense (their
+        # -eps*r_hat term rotates with the reference), so TRS alone punishes honest clients. A
+        # client holding the certificate is exempt from every TRS-driven branch (P2 gate, suspicion
+        # accumulation, P3 reject, P4 tolerance). The certificate demands (i) manifold evidence,
+        # (ii) coherent residuals and (iii) NO boundary-steering evidence, so it is the pinning
+        # evidence -- not rigidity -- that incriminates a mimicry attacker.
+        self.cert_enabled: bool = bool(config.get("honest_cert_enabled", False))
+        self.cert_mu_min: float = float(config.get("cert_mu_min", 0.05))
+        self.cert_rho_min: float = float(config.get("cert_rho_min", 0.40))
+        self.cert_prc_min: float = float(config.get("cert_prc_min", 0.10))
+        self.cert_tra_min: float = float(config.get("cert_tra_min", 0.30))
+
+        # --- Asynchronous staleness weighting -------------------------------------------------------
+        # weight multiplier = max(floor, (1 + version_lag) ** -exponent). Legacy: exponent 0.5, floor 0.
+        # With N clients cycling asynchronously the typical lag is ~N-1, so the legacy factor
+        # already scales EVERY decision weight (honest included) to ~1/sqrt(N) before any defence logic.
+        self.staleness_exponent: float = float(config.get("staleness_exponent", 0.5))
+        self.staleness_floor: float = float(config.get("staleness_floor", 0.0))
+
     def evaluate(
         self,
         cid: int,
@@ -119,14 +166,36 @@ class JointDecisionEngine:
 
         # Track per-client RAW cosine history for boundary-pinning detection (active across all
         # rounds, including warmup, so the gate can fire on the first post-warmup update).
+        # ``prior_band`` = this client's in-band samples BEFORE the current one (mass-point test).
+        prior_band: list = []
+        in_band_now = False
         if sim_pin is not None:
             if cid not in self.sim_g_history:
                 self.sim_g_history[cid] = deque(maxlen=self.bisection_window)
             self.sim_g_history[cid].append(float(sim_pin))
-            if (self.theta_cos - 0.02) <= sim_pin <= (self.theta_cos + self.bisection_band_margin):
+            in_band_now = (self.theta_cos - 0.02) <= sim_pin <= (self.theta_cos + self.bisection_band_margin)
+            if in_band_now:
                 if cid not in self.band_sim_history:
-                    self.band_sim_history[cid] = deque(maxlen=self.bisection_window)
+                    self.band_sim_history[cid] = deque(maxlen=max(self.bisection_window, self.pin_mass_min + 2))
+                prior_band = list(self.band_sim_history[cid])
                 self.band_sim_history[cid].append(float(sim_pin))
+
+        # Mass-point evidence: how many previous in-band samples sit on (almost exactly) this value.
+        pin_mass_hits = 0
+        if in_band_now and prior_band:
+            pin_mass_hits = sum(1 for x in prior_band if abs(x - sim_pin) <= self.pin_mass_tol)
+        # Neighbour-distance evidence: gap to the 2nd-nearest earlier in-band sample.
+        pin_nn2 = None
+        if in_band_now and len(prior_band) >= 2:
+            pin_nn2 = float(sorted(abs(x - sim_pin) for x in prior_band)[1])
+        pin_suspect = bool(
+            in_band_now and (
+                pin_mass_hits >= self.pin_suspect_min_hits or
+                (pin_nn2 is not None and pin_nn2 < self.pin_suspect_nn)
+            )
+        )
+        pin_strong = bool(in_band_now and self.pin_strong_hits > 0 and pin_mass_hits >= self.pin_strong_hits)
+        pin_thin_record = bool(in_band_now and len(prior_band) < self.pin_probation_min_samples)
 
         sim_s_mean = behavioral_ev.sim_self_mean
         sim_s_max = behavioral_ev.sim_self_max
@@ -143,7 +212,7 @@ class JointDecisionEngine:
 
         v_lag = version_lag if version_lag != 0 else getattr(temporal_ev, "version_lag", 0)
         # Asynchronous Staleness Penalty Matrix: dampens variance window of delayed gradients
-        staleness_factor = 1.0 / math.sqrt(1.0 + v_lag)
+        staleness_factor = max(self.staleness_floor, (1.0 + max(0, v_lag)) ** (-self.staleness_exponent))
         sim_frozen = getattr(behavioral_ev, "sim_frozen_anchor", None)
         drift_a = getattr(behavioral_ev, "anchor_drift", None)
         gdv = getattr(behavioral_ev, "gdv_score", None)
@@ -224,11 +293,26 @@ class JointDecisionEngine:
             (sim_g is not None and sim_g >= -self.theta_floor)
         )
 
-        is_consensus_exempt = (
+        is_cos_exempt = (
             self.trs_consensus_exempt and
             sim_exempt is not None and
             sim_exempt >= (effective_theta_cos + self.trs_consensus_margin)
         )
+
+        # Honest-convergence certificate (see __init__): manifold evidence + coherent residuals +
+        # no boundary-steering evidence. Exempts the client from every TRS-driven branch below.
+        has_cert = bool(
+            self.cert_enabled and
+            not pin_suspect and not pin_thin_record and
+            sim_g is not None and sim_g >= 0.0 and
+            (sim_pin is None or sim_pin >= 0.0) and
+            subspace_mu is not None and subspace_rho_parallel is not None and
+            subspace_mu >= self.cert_mu_min and
+            subspace_rho_parallel >= self.cert_rho_min and
+            (prc is None or prc >= self.cert_prc_min) and
+            (tra is None or tra >= self.cert_tra_min)
+        )
+        is_consensus_exempt = is_cos_exempt or has_cert
         is_consensus_aligned = (
             (sim_g is not None and sim_g >= effective_theta_cos) and
             (prc is None or prc >= self.theta_prc) and
@@ -320,10 +404,28 @@ class JointDecisionEngine:
         # noise) cannot dilute the variance. Honest clients hovering in the band naturally show
         # variance well above the threshold -- calibrate bisection_variance_thresh on honest logs.
         band_hist = self.band_sim_history.get(cid, [])
-        in_band_now = (sim_pin is not None and
-                       (self.theta_cos - 0.02) <= sim_pin <= (self.theta_cos + self.bisection_band_margin))
+        # 1c-i. Mass-point gate: >= pin_mass_min earlier in-band samples on this exact value.
+        if in_band_now and self.pin_mass_min > 0 and pin_mass_hits >= self.pin_mass_min:
+            return JointDecisionOutcome(
+                action="REJECT",
+                primary_reason="BOUNDARY_PINNING_REJECT",
+                aggregation_weight=0.0,
+                force_sync_required=False,
+                diagnostic_features={
+                    "priority": 1,
+                    "violation": "boundary_mass_point",
+                    "mass_hits": pin_mass_hits,
+                    "mass_tol": self.pin_mass_tol,
+                    "sim_g": sim_g,
+                    "sim_g_raw": sim_raw,
+                    "sim_frozen_anchor": sim_frozen,
+                    "anchor_drift": drift_a,
+                }
+            )
+
+        # 1c-ii. Variance-collapse gate over the last ``bisection_window`` in-band samples.
         if in_band_now and len(band_hist) >= self.bisection_window:
-            history = list(band_hist)
+            history = list(band_hist)[-self.bisection_window:]
             var_g = float(np.var(history))
             mean_g = float(np.mean(history))
             if var_g <= self.bisection_variance_thresh:
@@ -344,6 +446,36 @@ class JointDecisionEngine:
                         "anchor_drift": drift_a,
                     }
                 )
+
+        # ---------------------------------------------------------------------
+        # PRIORITY 1d: Boundary-steering probation
+        # ---------------------------------------------------------------------
+        # An in-band submission whose in-band record is too short to separate an honest client from
+        # a boundary-steering one, or that already shows mass-point / narrow-spread evidence, does
+        # not get full weight. It is admitted at a reduced weight (so honest clients are never
+        # dropped for being new to the band) but a *suspect* one is kept out of the reference
+        # buffer and charged to the leaky rejection rate by the aggregator (diagnostic flag below).
+        if self.pin_probation_enabled and (pin_suspect or pin_thin_record):
+            return JointDecisionOutcome(
+                action="DOWNWEIGHT",
+                primary_reason="BOUNDARY_PROBATION_DOWNWEIGHT",
+                aggregation_weight=self.pin_probation_weight * (I_i * P_i) * staleness_factor,
+                force_sync_required=False,
+                diagnostic_features={
+                    "priority": 1,
+                    "stage": "boundary_probation",
+                    "pin_suspect": pin_suspect,
+                    "pin_strong": pin_strong,
+                    "pin_thin_record": pin_thin_record,
+                    "mass_hits": pin_mass_hits,
+                    "nn2_gap": pin_nn2,
+                    "sim_g": sim_g,
+                    "sim_g_raw": sim_raw,
+                    "trs_score": trs,
+                    "suspicion_score": S_i,
+                    "version_lag": v_lag,
+                }
+            )
 
         # ---------------------------------------------------------------------
         # PRIORITY 2: Strong Multi-Domain Agreement (Full Consensus Acceptance)
@@ -406,9 +538,9 @@ class JointDecisionEngine:
             is_minority_consistent and
             (sim_g is not None and sim_g >= -self.theta_floor)
         )
-        is_trs_reject_applicable = (not self.trs_consensus_exempt) or (
+        is_trs_reject_applicable = ((not self.trs_consensus_exempt) or (
             (sim_exempt is None or sim_exempt < (effective_theta_cos + self.trs_consensus_margin)) and not is_minority_candidate
-        )
+        )) and not has_cert
         if trs is not None and trs >= self.trs_reject_thresh and depth >= self.trs_min_depth and is_trs_reject_applicable:
             return JointDecisionOutcome(
                 action="REJECT",
@@ -446,7 +578,7 @@ class JointDecisionEngine:
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
-        is_trs_tolerable = (trs is None or trs <= self.trs_warn_thresh or is_minority_consistent)
+        is_trs_tolerable = (trs is None or trs <= self.trs_warn_thresh or is_minority_consistent or has_cert)
 
         if (behavioral_ev.behavioral_mature and is_spatial_range and
             sim_s is not None and sim_s >= theta_self_eff and
@@ -551,7 +683,8 @@ class JointDecisionEngine:
         # ---------------------------------------------------------------------
         # PRIORITY 6: Adversarial / Inconsistent Fallthrough (REJECT & SLASH)
         # ---------------------------------------------------------------------
-        if trs is not None and trs >= self.trs_reject_thresh and ((not self.trs_consensus_exempt) or (sim_exempt is None or sim_exempt < (effective_theta_cos + self.trs_consensus_margin))):
+        if (trs is not None and trs >= self.trs_reject_thresh and not has_cert and
+                ((not self.trs_consensus_exempt) or (sim_exempt is None or sim_exempt < (effective_theta_cos + self.trs_consensus_margin)))):
             primary_reason = "TRAJECTORY_RIGIDITY_REJECT"
         elif S_i >= self.suspicion_reject_thresh:
             primary_reason = "PROGRESSIVE_SUSPICION_TRAJECTORY_REJECT"
@@ -584,8 +717,20 @@ class JointDecisionEngine:
         """Serializes decision engine state for checkpoint equivalence."""
         return {
             "suspicion_scores": {int(k): float(v) for k, v in self.suspicion_scores.items()},
+            # Raw-cosine ledgers feed the boundary-pinning gates; without them a resumed run
+            # restarts every client's pinning evidence from zero.
+            "sim_g_history": {int(k): [float(x) for x in v] for k, v in self.sim_g_history.items()},
+            "band_sim_history": {int(k): [float(x) for x in v] for k, v in self.band_sim_history.items()},
         }
 
     def load_state(self, state: dict) -> None:
         """Restores decision engine state from checkpoint."""
         self.suspicion_scores = {int(k): float(v) for k, v in state.get("suspicion_scores", {}).items()}
+        self.sim_g_history = {
+            int(k): deque([float(x) for x in v], maxlen=self.bisection_window)
+            for k, v in state.get("sim_g_history", {}).items()
+        }
+        self.band_sim_history = {
+            int(k): deque([float(x) for x in v], maxlen=max(self.bisection_window, self.pin_mass_min + 2))
+            for k, v in state.get("band_sim_history", {}).items()
+        }

@@ -630,20 +630,34 @@ class AggregatorServer:
                 weight = outcome.aggregation_weight
                 self._apply_global_update(eta * weight * delta_W_clipped)
 
-                entry = AcceptedEntry(
-                    delta_W=delta_W_clipped.clone(),
-                    I_score=I_i,
-                    P_score=P_i,
-                    client_id=cid,
-                )
-                self.accepted_buffer.append(entry)
-                self.spatial_validator.on_accept(entry)
-                self.spatial_validator.record_residual(cid, delta_W_clipped)
-                self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True, is_warmup=False)
+                # Boundary-steering suspects (probation) must not shape the consensus reference,
+                # the subspace basis inputs or the client's own behavioural memory, and must not
+                # launder their rejection rate: they are charged to the leaky rejection EMA instead
+                # of the "accepted update" decay. Honest clients on a thin in-band record
+                # (pin_suspect == False) take the normal path.
+                is_pin_suspect = bool(outcome.diagnostic_features.get("pin_suspect", False))
+                if not is_pin_suspect:
+                    entry = AcceptedEntry(
+                        delta_W=delta_W_clipped.clone(),
+                        I_score=I_i,
+                        P_score=P_i,
+                        client_id=cid,
+                    )
+                    self.accepted_buffer.append(entry)
+                    self.spatial_validator.on_accept(entry)
+                    self.spatial_validator.record_residual(cid, delta_W_clipped)
+                    self.behavioral_memory.on_accept(cid, delta_W_clipped, is_downweight=True, is_warmup=False)
                 self.temporal_filter.record_gap(g_i, cid)
 
-                # Neutral Hold: Reset spatial rejection streak, no integrity slash, no additive recovery
-                self.rep_manager.record_accepted_update(cid)
+                if is_pin_suspect:
+                    # Strong evidence (repeated mass-point hits) is charged to the leaky rejection rate;
+                    # weaker narrow-spread suspicion is neutral (no decay, no charge) so honest clients
+                    # that merely sit steadily inside the band are never slashed for it.
+                    if outcome.diagnostic_features.get("pin_strong", False):
+                        self.rep_manager.record_leaky_rejection(cid)
+                else:
+                    # Neutral Hold: Reset spatial rejection streak, no integrity slash, no additive recovery
+                    self.rep_manager.record_accepted_update(cid)
                 I_i, P_i = self.rep_manager.get(cid)
                 reg.last_update_time = t_now
 
