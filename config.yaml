@@ -115,7 +115,7 @@ staleness_exponent: 0.5
 staleness_floor: 0.0
 # Relative staleness: discount only lag ABOVE the recent population median lag (typical-lag clients get 1.0).
 # Absolute staleness at lag~16 is a uniform ~0.24 learning-rate cut that cannot tell honest from Byzantine.
-staleness_relative: true
+staleness_relative: false
 staleness_ref_window: 60
 staleness_ref_min: 10
 

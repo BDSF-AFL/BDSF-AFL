@@ -87,7 +87,8 @@ experiment:
   rep_reject_ema_rho: 0.20
   rep_reject_ema_slash: 0.40
   rep_reject_ema_recover_block: 0.30
-  staleness_relative: true
+  staleness_exponent: 0.5
+  staleness_relative: false
   staleness_ref_window: 60
   staleness_ref_min: 10
   p4_manifold_weight: 0.60
