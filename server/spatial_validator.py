@@ -394,12 +394,16 @@ class SpatialValidator:
         ref, _, _ = self._build_reference_stats()
         return ref
 
-    def get_state(self) -> dict:
-        """Serializes spatial validator state for checkpoint equivalence."""
+    def get_state(self, copy: bool = True) -> dict:
+        """Serializes spatial validator state for checkpoint equivalence.
+
+        copy=False returns the live CPU tensors (no duplicate of the buffers). Only safe when the result is
+        serialized immediately and dropped (checkpoint save); callers that keep the snapshot must use copy=True."""
+        _t = (lambda x: x.clone().cpu()) if copy else (lambda x: x.cpu())
         buffer_state = []
         for e in self._buffer:
             buffer_state.append({
-                "delta_W": e.delta_W.clone().cpu(),
+                "delta_W": _t(e.delta_W),
                 "I_score": e.I_score,
                 "P_score": e.P_score,
                 "client_id": e.client_id,
@@ -407,8 +411,8 @@ class SpatialValidator:
             })
         res_state = []
         for cid, res in self._residual_buffer:
-            res_state.append((cid, res.clone().cpu()))
-        last_res_state = {cid: res.clone().cpu() for cid, res in self._client_last_residual.items()}
+            res_state.append((cid, _t(res)))
+        last_res_state = {cid: _t(res) for cid, res in self._client_last_residual.items()}
         return {
             "buffer": buffer_state,
             "residual_buffer": res_state,

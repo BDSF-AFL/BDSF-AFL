@@ -349,13 +349,14 @@ class SubspaceProjectionEngine:
         """Returns True if the rolling basis has accumulated K vectors."""
         return len(self._basis_queue) >= self.K
 
-    def get_state(self) -> Dict[str, Any]:
-        """Serializes full state for atomic checkpointing and exact replay."""
+    def get_state(self, copy: bool = True) -> Dict[str, Any]:
+        """Serializes full state for atomic checkpointing and exact replay (copy=False: live tensors)."""
+        _t = (lambda x: x.clone().cpu()) if copy else (lambda x: x.cpu())
         return {
-            "basis_queue": [v.clone().cpu() for v in self._basis_queue],
-            "Q": self.Q.clone().cpu() if self.Q is not None else None,
-            "consensus_dir": self.consensus_dir.clone().cpu() if self.consensus_dir is not None else None,
-            "m_perp": {cid: m.clone().cpu() for cid, m in self.m_perp.items()},
+            "basis_queue": [_t(v) for v in self._basis_queue],
+            "Q": _t(self.Q) if self.Q is not None else None,
+            "consensus_dir": _t(self.consensus_dir) if self.consensus_dir is not None else None,
+            "m_perp": {cid: _t(m) for cid, m in self.m_perp.items()},
             "trusted_perp_norms": list(self._trusted_perp_norms),
         }
 

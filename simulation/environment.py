@@ -32,6 +32,30 @@ def _run_trainer_in_process(model, dataloader, config, W_global, current_round: 
     trainer = LocalTrainer(model, dataloader, config)
     return trainer.train(W_global, current_round=current_round)
 
+def _trim_heap() -> None:
+    """Return freed glibc heap pages to the OS (best effort, Linux only). Large clone/stack temporaries from
+    the defence pipeline fragment the heap, so RSS otherwise only ratchets upwards between checkpoints."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
+def _release_file_cache(path: str) -> None:
+    """Flush a just-written file and drop it from the page cache so a multi-GB checkpoint does not sit in the
+    container's memory accounting (best effort)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -322,13 +346,17 @@ class SimulationEnvironment:
                         "best_score": best_score,
                         "best_round": best_round,
                         "accuracy_log": list(accuracy_log),
-                        "server_state": server.get_state(),
+                        # copy=False: serialize the live buffers instead of first cloning every one of them
+                        # (that clone was the RAM spike at each checkpoint); the state is written and dropped below.
+                        "server_state": server.get_state(copy=False),
                         "rng_state": torch.get_rng_state(),
                     }
                     torch.save(state, path)
                     del state
+                    _release_file_cache(path)
                     import gc
                     gc.collect()
+                    _trim_heap()
             except Exception as e:
                 print(f"[WARNING] Checkpoint save to {path} failed: {e}")
 
@@ -444,6 +472,7 @@ class SimulationEnvironment:
                     # Memory & VRAM GC cleanup to prevent system RAM leaks
                     import gc
                     gc.collect()
+                    _trim_heap()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
 

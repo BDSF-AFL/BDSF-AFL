@@ -168,15 +168,16 @@ class ClientBehavioralProfile:
         """Number of valid historical updates currently in memory."""
         return len(self.gradient_memory)
 
-    def get_state(self) -> dict:
-        """Serializes single profile state for checkpointing."""
+    def get_state(self, copy: bool = True) -> dict:
+        """Serializes single profile state for checkpointing (copy=False: live tensors, see SpatialValidator.get_state)."""
+        _t = (lambda x: x.clone().cpu()) if copy else (lambda x: x.cpu())
         return {
-            "gradient_memory": [v.clone().cpu() for v in self.gradient_memory],
+            "gradient_memory": [_t(v) for v in self.gradient_memory],
             "norm_history": list(self.norm_history),
             "total_accepted": self.total_accepted,
-            "genesis_anchor": self.genesis_anchor.clone().cpu() if self.genesis_anchor is not None else None,
-            "frozen_genesis_anchor": self.frozen_genesis_anchor.clone().cpu() if self.frozen_genesis_anchor is not None else None,
-            "early_vectors": [v.clone().cpu() for v in self.early_vectors],
+            "genesis_anchor": _t(self.genesis_anchor) if self.genesis_anchor is not None else None,
+            "frozen_genesis_anchor": _t(self.frozen_genesis_anchor) if self.frozen_genesis_anchor is not None else None,
+            "early_vectors": [_t(v) for v in self.early_vectors],
             "consecutive_downweights": self.consecutive_downweights,
         }
 
@@ -356,10 +357,10 @@ class BehavioralMemoryManager:
                 profile.frozen_genesis_anchor = unit_ref.clone()
                 profile.early_vectors.clear()
 
-    def get_state(self) -> dict:
+    def get_state(self, copy: bool = True) -> dict:
         """Serializes full behavioral memory manager state for checkpointing."""
         return {
-            "profiles": {k: v.get_state() for k, v in self.profiles.items()},
+            "profiles": {k: v.get_state(copy=copy) for k, v in self.profiles.items()},
         }
 
     def load_state(self, state: dict) -> None:

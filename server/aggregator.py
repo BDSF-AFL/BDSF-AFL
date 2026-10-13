@@ -1061,8 +1061,11 @@ class AggregatorServer:
             kwargs["subspace_basis_count"] = self.subspace_engine.basis_count()
         self.logger.log_update(**kwargs)
 
-    def get_state(self) -> dict:
-        """Serializes full reproducible server state for atomic checkpointing."""
+    def get_state(self, copy: bool = True) -> dict:
+        """Serializes full reproducible server state for atomic checkpointing.
+
+        copy=False avoids duplicating every retained buffer (~10 GB on ResNet-18); use it only when the
+        result is written out immediately and discarded (the checkpoint path does)."""
         return {
             "W_global": self.W_global.clone().cpu(),
             "v_momentum": self.v_momentum.clone().cpu() if self.v_momentum is not None else None,
@@ -1076,11 +1079,11 @@ class AggregatorServer:
             "reject_ema": dict(self.rep_manager.reject_ema),
             "borderline_streaks": dict(self.rep_manager.borderline_streak),
             "temporal_state": self.temporal_filter.get_state(),
-            "spatial_state": self.spatial_validator.get_state(),
-            "behavioral_profiles": self.behavioral_memory.get_state(),
-            "quarantine_state": self.quarantine_manager.get_state(),
+            "spatial_state": self.spatial_validator.get_state(copy=copy),
+            "behavioral_profiles": self.behavioral_memory.get_state(copy=copy),
+            "quarantine_state": self.quarantine_manager.get_state(copy=copy),
             "decision_engine_state": self.decision_engine.get_state(),
-            "subspace_state": self.subspace_engine.get_state() if self.subspace_engine is not None else None,
+            "subspace_state": self.subspace_engine.get_state(copy=copy) if self.subspace_engine is not None else None,
         }
 
     def load_state(self, state: dict) -> None:

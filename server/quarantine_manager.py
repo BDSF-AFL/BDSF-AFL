@@ -120,14 +120,14 @@ class QuarantineManager:
         """Current number of quarantined updates in memory."""
         return len(self.buffer)
 
-    def get_state(self) -> dict:
-        """Serializes quarantine manager state for checkpointing."""
+    def get_state(self, copy: bool = True) -> dict:
+        """Serializes quarantine manager state for checkpointing (copy=False: live tensors)."""
         entries_state = []
         for e in self.buffer:
             entries_state.append({
                 "entry_id": e.entry_id,
                 "client_id": e.client_id,
-                "delta_W_clipped": e.delta_W_clipped.clone().cpu(),
+                "delta_W_clipped": (e.delta_W_clipped.clone().cpu() if copy else e.delta_W_clipped.cpu()),
                 "entry_round": e.entry_round,
                 "entry_virtual_time": e.entry_virtual_time,
                 "reputation_at_entry": e.reputation_at_entry,
