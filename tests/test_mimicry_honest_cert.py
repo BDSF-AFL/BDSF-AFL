@@ -289,5 +289,49 @@ class TestStragglerShock(unittest.TestCase):
             self.assertEqual(out.primary_reason, "HARD_GUARD_TEMPORAL_STRAGGLER")
 
 
+class TestLongMemoryMassPoint(unittest.TestCase):
+    # S2 that interleaves natural in-band values between pinned ones: the short ledger (last 5 in-band) never sees 3 hits
+    SEQ = [0.2000, 0.151, 0.224, 0.2000, 0.177, 0.239, 0.162, 0.213, 0.2000, 0.149, 0.231, 0.186, 0.2000]
+
+    def _outs(self, **over):
+        eng = JointDecisionEngine(base_cfg(honest_cert_enabled=False, **over))
+        return [run(eng, 0, [x]) for x in self.SEQ]
+
+    def test_short_ledger_misses_diluted_pinning(self):
+        outs = self._outs(pin_mass_long_window=0)
+        self.assertNotIn("BOUNDARY_PINNING_REJECT", [o.primary_reason for o in outs])
+
+    def test_long_ledger_catches_diluted_pinning(self):
+        outs = self._outs(pin_mass_long_window=60)
+        self.assertEqual(outs[-1].primary_reason, "BOUNDARY_PINNING_REJECT")
+        self.assertEqual(outs[-1].diagnostic_features["violation"], "boundary_mass_point")
+
+    def test_long_ledger_adds_negligible_false_positives(self):
+        """Uniform in-band values are a worst case for coincidences (real honest cosines cluster less tightly).
+        The legacy gates already misfire at ~0.2% here; the long ledger must not add more than 0.1 points."""
+        import random
+
+        def fp_rate(window):
+            eng = JointDecisionEngine(base_cfg(pin_mass_long_window=window))
+            rnd = random.Random(1)
+            fp = n = 0
+            for cid in range(200):
+                for _ in range(50):
+                    out = run(eng, cid, [0.13 + 0.17 * rnd.random()])
+                    n += 1
+                    fp += out.primary_reason == "BOUNDARY_PINNING_REJECT"
+            return fp / n
+
+        self.assertLessEqual(fp_rate(60), fp_rate(0) + 0.001)
+
+    def test_long_ledger_survives_checkpoint(self):
+        a = JointDecisionEngine(base_cfg(honest_cert_enabled=False, pin_mass_long_window=60))
+        for x in self.SEQ[:-1]:
+            run(a, 0, [x])
+        b = JointDecisionEngine(base_cfg(honest_cert_enabled=False, pin_mass_long_window=60))
+        b.load_state(a.get_state())
+        self.assertEqual(run(b, 0, [0.2000]).primary_reason, "BOUNDARY_PINNING_REJECT")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

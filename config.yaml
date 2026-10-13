@@ -17,6 +17,8 @@ local_epochs: 1              # single-epoch local steps to minimize non-IID clie
 local_lr: 0.01
 lr_schedule: "cosine"        # dynamic learning rate: cosine annealing from 0.01 -> 0.001
 lr_min: 0.001
+train_augment: false        # true: RandomCrop(32,pad=4)+HorizontalFlip on CIFAR-10 TRAIN data only (test unchanged)
+lr_schedule_unit: "round"   # "round": schedule runs over total_rounds ROUNDS (N updates each). "update": legacy (decays after total_rounds updates)
 T_base: 1.0                  # base compute time (seconds; simulated)
 lognormal_mu: 0.5
 lognormal_sigma: 1.0
@@ -94,6 +96,8 @@ pin_mass_min: 3
 # Suspects are also kept out of the reference buffer and charged to the leaky rejection rate.
 pin_probation_enabled: true
 pin_probation_min_samples: 2
+pin_mass_long_window: 60      # long-memory mass point: in-band samples remembered per client (0 = off)
+pin_mass_long_tol: 0.0003     # pinned S2 values are exact to ~1e-5; honest values essentially never repeat this closely
 pin_probation_weight: 0.15
 pin_suspect_nn: 0.008      # suspect if 2nd-nearest earlier in-band sample is closer than this
 pin_suspect_min_hits: 1
@@ -115,7 +119,7 @@ staleness_exponent: 0.5
 staleness_floor: 0.0
 # Relative staleness: discount only lag ABOVE the recent population median lag (typical-lag clients get 1.0).
 # Absolute staleness at lag~16 is a uniform ~0.24 learning-rate cut that cannot tell honest from Byzantine.
-staleness_relative: false
+staleness_relative: false   # TRUE destabilised the run (4.6x step -> consensus basis flipped); keep OFF unless the step is re-tuned
 staleness_ref_window: 60
 staleness_ref_min: 10
 

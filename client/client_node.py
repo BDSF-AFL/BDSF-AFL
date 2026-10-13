@@ -6,6 +6,7 @@ from shared.types import UpdateSubmission, ForceSyncPayload
 from client.local_trainer import LocalTrainer
 from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
+from utils.lr_schedule import lr_schedule_round
 
 class ClientNode:
     def __init__(self, client_id: int, trainer: LocalTrainer, server: object, force_sync_handler: ForceSyncHandler, config: dict, logger: BDSFLogger, local_model = None, dataloader = None, pool = None, device_semaphore: asyncio.Semaphore = None):
@@ -64,7 +65,7 @@ class ClientNode:
         delay = await self._simulate_delay()
  
         # 3. Train locally
-        current_round = getattr(self.server, "round_number", 0)
+        current_round = lr_schedule_round(self.server)   # updates -> rounds (see utils/lr_schedule.py)
         delta_W = await self.train_async(W_global, current_round=current_round)
  
         # 4. Build submission with monotonic virtual timestamp

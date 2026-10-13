@@ -102,6 +102,14 @@ class JointDecisionEngine:
         # Probation: an in-band submission from a client whose in-band record is too short to
         # tell honest from boundary-steering (or that already shows mass-point / narrow-spread
         # evidence) is NOT given full weight. Off by default (legacy behaviour).
+        # Long-memory mass point (default OFF = legacy). The short ledger above only remembers the last
+        # bisection_window/pin_mass_min+2 in-band samples, so a client that interleaves its natural in-band
+        # values (S2 submits unmodified updates when its natural cosine is already below the target) pushes
+        # its earlier pinned samples out of memory and never reaches pin_mass_min hits. The pinned value
+        # is exact to ~1e-5, so a much longer window with a much tighter tolerance has no honest false positives.
+        self.pin_mass_long_window: int = int(config.get("pin_mass_long_window", 0))
+        self.pin_mass_long_tol: float = float(config.get("pin_mass_long_tol", 0.0003))
+        self.mass_long_history: dict[int, deque] = {}
         self.pin_probation_enabled: bool = bool(config.get("pin_probation_enabled", False))
         self.pin_probation_min_samples: int = int(config.get("pin_probation_min_samples", 3))
         self.pin_probation_weight: float = float(config.get("pin_probation_weight", 0.30))
@@ -197,6 +205,7 @@ class JointDecisionEngine:
         # rounds, including warmup, so the gate can fire on the first post-warmup update).
         # ``prior_band`` = this client's in-band samples BEFORE the current one (mass-point test).
         prior_band: list = []
+        prior_long: list = []
         in_band_now = False
         if sim_pin is not None:
             if cid not in self.sim_g_history:
@@ -208,11 +217,18 @@ class JointDecisionEngine:
                     self.band_sim_history[cid] = deque(maxlen=max(self.bisection_window, self.pin_mass_min + 2))
                 prior_band = list(self.band_sim_history[cid])
                 self.band_sim_history[cid].append(float(sim_pin))
+                if self.pin_mass_long_window > 0:
+                    if cid not in self.mass_long_history:
+                        self.mass_long_history[cid] = deque(maxlen=self.pin_mass_long_window)
+                    prior_long = list(self.mass_long_history[cid])
+                    self.mass_long_history[cid].append(float(sim_pin))
 
         # Mass-point evidence: how many previous in-band samples sit on (almost exactly) this value.
         pin_mass_hits = 0
         if in_band_now and prior_band:
             pin_mass_hits = sum(1 for x in prior_band if abs(x - sim_pin) <= self.pin_mass_tol)
+        if in_band_now and prior_long:
+            pin_mass_hits = max(pin_mass_hits, sum(1 for x in prior_long if abs(x - sim_pin) <= self.pin_mass_long_tol))
         # Neighbour-distance evidence: gap to the 2nd-nearest earlier in-band sample.
         pin_nn2 = None
         if in_band_now and len(prior_band) >= 2:
@@ -780,6 +796,7 @@ class JointDecisionEngine:
             # restarts every client's pinning evidence from zero.
             "sim_g_history": {int(k): [float(x) for x in v] for k, v in self.sim_g_history.items()},
             "band_sim_history": {int(k): [float(x) for x in v] for k, v in self.band_sim_history.items()},
+            "mass_long_history": {int(k): [float(x) for x in v] for k, v in self.mass_long_history.items()},
             "lag_hist": [float(x) for x in self._lag_hist],
         }
 
@@ -790,6 +807,10 @@ class JointDecisionEngine:
         self.sim_g_history = {
             int(k): deque([float(x) for x in v], maxlen=self.bisection_window)
             for k, v in state.get("sim_g_history", {}).items()
+        }
+        self.mass_long_history = {
+            int(k): deque([float(x) for x in v], maxlen=max(1, self.pin_mass_long_window))
+            for k, v in state.get("mass_long_history", {}).items()
         }
         self.band_sim_history = {
             int(k): deque([float(x) for x in v], maxlen=max(self.bisection_window, self.pin_mass_min + 2))

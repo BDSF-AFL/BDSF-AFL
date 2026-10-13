@@ -10,6 +10,8 @@ experiment:
   local_lr: 0.01
   lr_schedule: "cosine"
   lr_min: 0.001
+  lr_schedule_unit: "round"
+  train_augment: false
   fedprox_mu: 0.01
   N_clients: 20
   M: 30
@@ -74,6 +76,8 @@ experiment:
   pin_mass_min: 3
   pin_probation_enabled: true
   pin_probation_min_samples: 2
+  pin_mass_long_window: 60
+  pin_mass_long_tol: 0.0003
   pin_probation_weight: 0.15
   pin_suspect_nn: 0.008
   pin_suspect_min_hits: 1

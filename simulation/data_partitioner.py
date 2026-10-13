@@ -30,6 +30,17 @@ class DataPartitioner:
                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
             ])
 
+        # Optional CIFAR-10 training augmentation (config: train_augment, default False = unchanged behaviour).
+        # Only the TRAIN transform changes; self.transform (used by the test loader) stays normalise-only.
+        self.train_transform = self.transform
+        if self.dataset_name != "MNIST" and bool(cfg.get("train_augment", False)):
+            self.train_transform = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
+            ])
+
     def get_dataloaders(self):
         """Convenience method returning (train_loaders, test_loader)."""
         return self.partition(), self.get_test_loader()
@@ -99,7 +110,7 @@ class DataPartitioner:
         else:
             cifar_path = os.path.join(self.data_dir, "cifar-10-batches-py")
             should_download = not os.path.exists(cifar_path)
-            train_dataset = datasets.CIFAR10(root=self.data_dir, train=True, download=should_download, transform=self.transform)
+            train_dataset = datasets.CIFAR10(root=self.data_dir, train=True, download=should_download, transform=self.train_transform)
             targets = np.array(train_dataset.targets)
             
         num_samples = len(train_dataset)

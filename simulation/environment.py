@@ -20,6 +20,7 @@ from client.force_sync_handler import ForceSyncHandler
 from utils.logger import BDSFLogger
 from utils.device_utils import resolve_device, resolve_all_devices, gpu_count, mark_step, set_xla_seed
 import utils.metrics as metrics
+from utils.lr_schedule import lr_schedule_round
 
 def _run_trainer_in_process(model, dataloader, config, W_global, current_round: int = 0):
     """Standalone worker function executed inside ProcessPoolExecutor for true GPU parallelism."""
@@ -119,7 +120,7 @@ class AttackInjectorWrapper:
         delay = await self.client._simulate_delay()
  
         # 3. Train locally to get honest gradient
-        current_round = getattr(self.server, "round_number", 0)
+        current_round = lr_schedule_round(self.server)   # updates -> rounds (see utils/lr_schedule.py)
         honest_delta_W = await self.client.train_async(W_global, current_round=current_round)
         t_submit_honest = tau + delay
         
