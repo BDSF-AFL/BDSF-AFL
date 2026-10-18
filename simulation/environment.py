@@ -455,7 +455,8 @@ class SimulationEnvironment:
                         f"| Loss: {val_loss:.4f} "
                         f"| ||v||: {v_norm:.4f} "
                         f"| Score: {score:.4f} (Best: {best_acc:.4f} @ R{best_round}) "
-                        f"| elapsed={elapsed:.1f}s",
+                        f"| elapsed={elapsed:.1f}s "
+                        f"| lr={LocalTrainer.last_lr:.5f}",
                         flush=True,
                     )
 

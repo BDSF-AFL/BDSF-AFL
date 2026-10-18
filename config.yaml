@@ -2,7 +2,7 @@
 
 # System
 N_clients: 20
-total_rounds: 500
+total_rounds: 200
 eval_every: 10
 log_dir: "logs/"
 device: "cpu"

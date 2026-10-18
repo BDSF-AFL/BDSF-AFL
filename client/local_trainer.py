@@ -16,6 +16,8 @@ except ImportError:
 
 
 class LocalTrainer:
+    last_lr: float = float("nan")   # most recent learning rate used by ANY trainer (diagnostic only)
+
     def __init__(self, model: nn.Module, dataloader: DataLoader, config: dict):
         self.config = config
         self.device = config.get("device", "cpu")
@@ -65,6 +67,7 @@ class LocalTrainer:
     def _train_impl(self, W_global: torch.Tensor, current_round: int = 0) -> torch.Tensor:
         self._load_weights(W_global)
         lr_t = self._get_current_lr(current_round)
+        LocalTrainer.last_lr = lr_t      # shown on the Eval line so the schedule is verifiable in the console log
         optimizer = optim.SGD(self.model.parameters(), lr=lr_t, weight_decay=self.weight_decay)
         self.model.train()
 
