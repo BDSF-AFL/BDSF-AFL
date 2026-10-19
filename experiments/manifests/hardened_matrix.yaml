@@ -6,10 +6,10 @@ experiment:
   rounds: 200
   batch_size: 32
   local_epochs: 1
-  lr: 0.01
-  local_lr: 0.01
+  lr: 0.02
+  local_lr: 0.02
   lr_schedule: "cosine"
-  lr_min: 0.001
+  lr_min: 0.006
   lr_schedule_unit: "round"
   train_augment: false
   fedprox_mu: 0.01
@@ -17,7 +17,7 @@ experiment:
   M: 30
   K_base: 50
   K_ref: 10
-  eta: 0.01
+  eta: 0.015
   server_momentum: 0.90
   theta_self: 0.30
   theta_self_mature: 0.30
@@ -25,7 +25,7 @@ experiment:
   theta_anchor_min: 0.25
   theta_anchor_mature: 0.25
   theta_cos: 0.15
-  stochastic_jitter_max: 0.08
+  stochastic_jitter_max: 0.04
   adaptive_clip_enabled: true
   gamma_clip: 1.10
   theta_prc: 0.20
@@ -51,12 +51,14 @@ experiment:
   beta_I: 0.08
   beta_P: 0.10
   spatial_grace_k: 3
+  temporal_grace_k: 3
   enable_quarantine: true
   quarantine_horizon: 5
   quarantine_capacity: 20
   delta_borderline: 0.05
   K_drift_max: 10
   min_integrity_floor: 0.10
+  alpha_downweight: 0.6
   enable_subspace: true
   subspace_K: 10
   subspace_macro_floor: 0.40
@@ -69,9 +71,10 @@ experiment:
   subspace_m_perp_base: 2.0
   subspace_mu_floor: 0.10
   subspace_energy_floor: 0.40
-  bisection_window: 4
-  bisection_variance_thresh: 0.00005
+  bisection_window: 6
+  bisection_variance_thresh: 0.0001
   bisection_band_margin: 0.10
+  subspace_damp_reject_floor: 0.02
   pin_mass_tol: 0.0015
   pin_mass_min: 3
   pin_probation_enabled: true
@@ -91,11 +94,11 @@ experiment:
   rep_reject_ema_rho: 0.20
   rep_reject_ema_slash: 0.40
   rep_reject_ema_recover_block: 0.30
-  staleness_exponent: 0.5
+  staleness_exponent: 0.35
   staleness_relative: false
   staleness_ref_window: 60
   staleness_ref_min: 10
-  p4_manifold_weight: 0.60
+  p4_manifold_weight: 0.85
   straggler_shock_min_clients: 2
   straggler_shock_window: 40
 
