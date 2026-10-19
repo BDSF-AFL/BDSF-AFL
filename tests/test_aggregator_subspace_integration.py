@@ -253,8 +253,8 @@ class TestAggregatorSubspaceIntegration(unittest.TestCase):
             header = reader[0]
             row = reader[1]
 
-        self.assertEqual(len(header), 45)
-        self.assertEqual(len(row), 45)
+        self.assertEqual(len(header), 46)
+        self.assertEqual(len(row), 46)
         header_map = {name: idx for idx, name in enumerate(header)}
         
         # Ground truth label must be True for client 1

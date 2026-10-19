@@ -65,6 +65,7 @@ BDSF_UPDATE_HEADERS: List[str] = [
     # Server Velocity
     "v_momentum_norm",
     "sim_global_raw",   # cosine to reference BEFORE subspace damping (appended last for CSV compat)
+    "attack_modified",  # simulation ground truth: True when the injector actually changed the update (appended last for CSV compat)
 ]
 
 

@@ -17,6 +17,7 @@ class UpdateSubmission:
     t_submit:               float          # time.time() at push moment
     tau:                    float          # time.time() when client pulled W_global (staleness s_i = t_submit - tau)
     model_version_at_pull:  int = 0        # Server model version when client pulled W_global
+    attack_modified:        Optional[bool] = None   # simulation bookkeeping: did the attacker actually alter this update? (None = honest/unknown)
 
 @dataclass
 class AcceptedEntry:

@@ -151,6 +151,8 @@ class AggregatorServer:
         cid = submission.client_id
         reg = self.registry[cid]
         t_now = submission.t_submit
+        _flag = getattr(submission, "attack_modified", None)
+        self._cur_attack_flag = (cid, _flag) if _flag is not None else None
         
         # Advance global virtual timeline monotonically
         self.virtual_time = max(self.virtual_time, t_now)
@@ -1053,6 +1055,10 @@ class AggregatorServer:
 
     def _log_update(self, **kwargs):
         cid = kwargs.get("client_id")
+        # Ground-truth "was this update actually attacked" flag, only for rows of the submission being handled.
+        cur = getattr(self, "_cur_attack_flag", None)
+        if "attack_modified" not in kwargs and cur is not None and cur[0] == cid:
+            kwargs["attack_modified"] = cur[1]
         if "is_byzantine" not in kwargs and cid is not None and cid in self.registry:
             kwargs["is_byzantine"] = self.registry[cid].is_byzantine
         if "v_momentum_norm" not in kwargs:

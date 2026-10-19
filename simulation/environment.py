@@ -154,12 +154,18 @@ class AttackInjectorWrapper:
         t_submit_modified = self.last_update_time + modified_g
         self.client._last_submit_time = t_submit_modified
         
+        # Ground truth for ASR: was the update (or its timing) actually altered? S2 submits the honest update
+        # unchanged whenever its natural cosine is already below the target, and that is not an attack.
+        _hn = float(torch.norm(honest_delta_W.flatten()))
+        _grad_changed = float(torch.norm((modified_dW - honest_delta_W).flatten())) > 1e-6 * max(1.0, _hn)
+        _time_changed = abs(float(modified_g) - float(honest_g_i)) > 1e-9 * max(1.0, abs(float(honest_g_i)))
         submission = UpdateSubmission(
             client_id=self.client.client_id,
             delta_W=modified_dW,
             t_submit=t_submit_modified,
             tau=tau,
             model_version_at_pull=version_at_pull,
+            attack_modified=bool(_grad_changed or _time_changed),
         )
 
         # 6. Push to server

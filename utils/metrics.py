@@ -40,11 +40,52 @@ def compute_evaluation_metrics(model: torch.nn.Module, test_loader: DataLoader, 
     acc = correct / total if total > 0 else 0.0
     return acc, avg_loss
 
+def _post_warmup_byz_rows(rejection_log: list[dict], byzantine_ids: set[int]) -> list[dict]:
+    return [r for r in rejection_log
+            if r.get("client_id") in byzantine_ids
+            and r.get("status") in ("ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT")
+            and r.get("reason") != "SPATIAL_WARMUP_ACCEPT"
+            and not r.get("is_warmup")]
+
+
+def _is_true(v) -> bool:
+    return v is True or str(v).strip().lower() == "true"
+
+
+def _has_modified_flag(rows: list[dict]) -> bool:
+    return any(str(r.get("attack_modified", "")).strip().lower() in ("true", "false") for r in rows)
+
+
 def compute_attack_success_rate(rejection_log: list[dict], byzantine_ids: set[int]) -> float:
-    byz_submissions = [r for r in rejection_log if r.get("client_id") in byzantine_ids and r.get("status") in ["ACCEPT", "DOWNWEIGHT", "QUARANTINE", "REJECT"]]
-    if not byz_submissions: return 0.0
-    accepted = sum(1 for r in byz_submissions if r.get("status") in ["ACCEPT", "DOWNWEIGHT"])
-    return accepted / len(byz_submissions)
+    """Share of ATTACKED submissions that reached the model (ACCEPT or DOWNWEIGHT), post-warmup.
+
+    Two problems of the previous definition are fixed:
+      * warmup accepts (the defence accepts everything by design) are excluded;
+      * a Byzantine client's UNMODIFIED update (S2 sends the honest update untouched when its natural cosine is
+        already below the target) is an honest gradient, not an attack, so it is not counted. This needs the
+        ``attack_modified`` ground-truth flag the simulator now logs; for older logs without it the function falls
+        back to all post-warmup Byzantine submissions (``compute_detection_breakdown['influence_rate']``).
+    """
+    rows = _post_warmup_byz_rows(rejection_log, byzantine_ids)
+    if _has_modified_flag(rows):
+        rows = [r for r in rows if _is_true(r.get("attack_modified"))]
+    if not rows:
+        return 0.0
+    admitted = sum(1 for r in rows if r.get("status") in ("ACCEPT", "DOWNWEIGHT"))
+    return admitted / len(rows)
+
+
+def compute_poison_weight_share(rejection_log: list[dict], byzantine_ids: set[int]) -> float:
+    """Aggregation weight carried by ATTACKED updates / total aggregation weight, post-warmup (impact, not count).
+    Falls back to all Byzantine weight when the ``attack_modified`` flag is absent."""
+    post = [r for r in rejection_log
+            if r.get("status") in ("ACCEPT", "DOWNWEIGHT")
+            and r.get("reason") != "SPATIAL_WARMUP_ACCEPT" and not r.get("is_warmup")]
+    byz = [r for r in post if r.get("client_id") in byzantine_ids]
+    if _has_modified_flag(_post_warmup_byz_rows(rejection_log, byzantine_ids)):
+        byz = [r for r in byz if _is_true(r.get("attack_modified"))]
+    total = sum(float(r.get("weight") or 0.0) for r in post)
+    return (sum(float(r.get("weight") or 0.0) for r in byz) / total) if total > 0 else 0.0
 
 def compute_detection_breakdown(rejection_log: list[dict], byzantine_ids: set[int],
                                 exclude_warmup: bool = True) -> dict:
