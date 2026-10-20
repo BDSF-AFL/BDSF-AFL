@@ -6,10 +6,10 @@ experiment:
   rounds: 200
   batch_size: 32
   local_epochs: 1
-  lr: 0.02
-  local_lr: 0.02
+  lr: 0.05
+  local_lr: 0.05
   lr_schedule: "cosine"
-  lr_min: 0.006
+  lr_min: 0.015
   lr_schedule_unit: "round"
   train_augment: false
   fedprox_mu: 0.01
@@ -58,7 +58,7 @@ experiment:
   delta_borderline: 0.05
   K_drift_max: 10
   min_integrity_floor: 0.10
-  alpha_downweight: 0.6
+  alpha_downweight: 0.8
   enable_subspace: true
   subspace_K: 10
   subspace_macro_floor: 0.40
@@ -94,11 +94,11 @@ experiment:
   rep_reject_ema_rho: 0.20
   rep_reject_ema_slash: 0.40
   rep_reject_ema_recover_block: 0.30
-  staleness_exponent: 0.35
+  staleness_exponent: 0.25
   staleness_relative: false
   staleness_ref_window: 60
   staleness_ref_min: 10
-  p4_manifold_weight: 0.85
+  p4_manifold_weight: 1.0
   straggler_shock_min_clients: 2
   straggler_shock_window: 40
 
