@@ -76,6 +76,10 @@ class SubspaceProjectionEngine:
         kappa: float = 0.10,
         stage_slices: Optional[Dict[str, Tuple[int, int]]] = None,
         default_m_perp_base: float = 2.0,
+        valve_enabled: bool = True,
+        valve_window: int = 40,
+        valve_min: int = 20,
+        valve_median_floor: float = 0.5,
     ):
         self.K = K
         self.eps_floor = eps_floor
@@ -98,6 +102,19 @@ class SubspaceProjectionEngine:
 
         # Running median of trusted orthogonal norms
         self._trusted_perp_norms: deque[float] = deque(maxlen=50)
+        # Release valve for the trusted-norm ratchet: the trusted baseline only learns from updates that Gate 2
+        # leaves undamped (w_damp > 0.95). If honest norms outgrow the early baseline (higher lr, sharper
+        # landscape) no update qualifies, the baseline never rises and every honest update ends up damped to ~0
+        # (SUBSPACE_ENERGY_COLLAPSE). Under the honest-majority assumption the engine already relies on elsewhere
+        # (median clip bound), a MAJORITY of recent updates being heavily damped means the baseline is stale, not
+        # that most clients are Byzantine, so the baseline is re-seeded from the recent population median.
+        self.valve_enabled: bool = bool(valve_enabled)
+        self.valve_window: int = int(valve_window)
+        self.valve_min: int = int(valve_min)
+        self.valve_median_floor: float = float(valve_median_floor)
+        self._recent_perp_norms: deque[float] = deque(maxlen=self.valve_window)
+        self._recent_w_damp: deque[float] = deque(maxlen=self.valve_window)
+        self.valve_fired: int = 0
 
     # -------------------------------------------------------------------------
     # Basis Maintenance
@@ -285,6 +302,10 @@ class SubspaceProjectionEngine:
 
         # 4. Gate 2: Adaptive Orthogonal Energy Bounding with Two-Tier Damping
         if M_perp_base is None:
+            if (self.valve_enabled and len(self._recent_w_damp) >= self.valve_min
+                    and float(torch.median(torch.tensor(list(self._recent_w_damp)))) < self.valve_median_floor):
+                self._trusted_perp_norms = deque(self._recent_perp_norms, maxlen=50)
+                self.valve_fired += 1
             if len(self._trusted_perp_norms) >= 5:
                 M_perp_base = float(torch.median(torch.tensor(list(self._trusted_perp_norms))))
             else:
@@ -330,6 +351,9 @@ class SubspaceProjectionEngine:
         v_perp_scaled = v_perp * (w_damp * w_temporal)
         v_clean_flat = v_parallel + v_perp_scaled
         v_clean = v_clean_flat.reshape(v.shape)
+
+        self._recent_perp_norms.append(norm_perp)
+        self._recent_w_damp.append(w_damp)
 
         # Track trusted orthogonal norm if clean update passed
         if w_damp > 0.95 and w_temporal > 0.95:

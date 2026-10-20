@@ -2,7 +2,7 @@
 
 # System
 N_clients: 20
-total_rounds: 200   # was 500; schedule now completes at the planned stop (cosine ends at lr_min on the last round)
+total_rounds: 200   # 200-round run (run 2 value 200)
 eval_every: 10
 log_dir: "logs/"
 device: "cpu"
@@ -14,9 +14,9 @@ batch_size: 32
 
 # Client training
 local_epochs: 1              # single-epoch local steps to minimize non-IID client drift
-local_lr: 0.05   # was 0.02; Run 3 aggressive step calibration
+local_lr: 0.04   # tuned from 0.05 for optimal stability/speed tradeoff
 lr_schedule: "cosine"        # dynamic learning rate: cosine annealing from 0.01 -> 0.001
-lr_min: 0.015   # was 0.006; Run 3 LR floor calibration
+lr_min: 0.012   # tuned from 0.015; high step floor for 200-round benchmark
 train_augment: false        # true: RandomCrop(32,pad=4)+HorizontalFlip on CIFAR-10 TRAIN data only (test unchanged)
 lr_schedule_unit: "round"   # "round": schedule runs over total_rounds ROUNDS (N updates each). "update": legacy (decays after total_rounds updates)
 T_base: 1.0                  # base compute time (seconds; simulated)
@@ -25,7 +25,7 @@ lognormal_sigma: 1.0
 fedprox_mu: 0.01             # proximal regularization to bound non-IID trajectory deviation
 
 # Server aggregation & Optimization (Phase 5)
-eta: 0.015   # was 0.01; server step; with weights below keeps Sum(w)/round at ~0.7-0.9 of FedAvg parity (parity >1 destabilised an earlier run)
+eta: 0.015   # run-2 value was 0.015; back from 0.02 so total step stays ~4x run 2 (run 1->2 was 4.7x and stable)
 server_momentum: 0.90       # Momentum-enhanced asynchronous aggregation (FedAvgM beta_m=0.90)
 model_architecture: "resnet18"       # resnet18 (CIFAR-10 Adapted) | cnn (Legacy baseline) | mlp (MNIST)
 early_stopping: false                # Automated convergence stopping
@@ -84,6 +84,14 @@ bisection_band_margin: 0.10      # boundary band: [theta_cos - 0.02, theta_cos +
 exempt_use_raw_sim: true         # consensus-exemption (TRS bypass) uses raw cosine, not subspace-damped
 stochastic_jitter_max: 0.04      # explicit now (was an undocumented code default); S2 targets theta_cos+0.05
 subspace_damp_reject_floor: 0.02 # Gate-2 w_damp below this => spatial REJECT (T1 noise), 0 disables
+# Release valve for the trusted-orthogonal-norm ratchet (see SubspaceProjectionEngine): when the MEDIAN w_damp of the
+# last subspace_valve_window updates drops below subspace_valve_median_floor, the Gate-2 baseline is re-seeded from the
+# recent population median instead of staying frozen at its early (smaller) value. Without it, growing honest norms
+# are damped to ~0 and every update is rejected as SUBSPACE_ENERGY_COLLAPSE (seen on the no-attack run at round ~90).
+subspace_valve_enabled: true
+subspace_valve_window: 40
+subspace_valve_min: 20
+subspace_valve_median_floor: 0.5
 
 # Boundary-steering detection v2 (S2 / ADAPTIVE) -- see decision_engine.py Priority 1c / 1d
 # Mass point: if >= pin_mass_min earlier in-band raw cosines of this client sit within pin_mass_tol of
@@ -115,7 +123,7 @@ cert_tra_min: 0.30
 # Async staleness weight = max(staleness_floor, (1 + version_lag) ** -staleness_exponent), applied to EVERY
 # decision weight. Legacy = exponent 0.5, floor 0.0. With 20 clients cycling asynchronously the typical lag is
 # ~15-20, i.e. a legacy factor of ~0.22-0.25 on honest and Byzantine updates alike, BEFORE any defence logic.
-staleness_exponent: 0.25   # was 0.35; lag~16 factor 0.37 -> 0.49
+staleness_exponent: 0.25   # was 0.5 (run-2 value 0.35); lag~16 factor 0.37 -> 0.49
 staleness_floor: 0.0
 # Relative staleness: discount only lag ABOVE the recent population median lag (typical-lag clients get 1.0).
 # Absolute staleness at lag~16 is a uniform ~0.24 learning-rate cut that cannot tell honest from Byzantine.
@@ -126,7 +134,7 @@ staleness_ref_min: 10
 # P4 manifold boost: non-IID honest clients (sim_g < 0, so no certificate) that sit inside the consensus subspace
 # (mu/rho_par/prc/tra above the cert_* floors), have no pinning evidence and suspicion < 0.30 are DOWNWEIGHTed at
 # max(alpha_eff, p4_manifold_weight) instead of ~0.3. They still stay out of the accepted buffer / consensus basis.
-p4_manifold_weight: 1.0   # was 0.85; full parity manifold-certified non-IID honest rows
+p4_manifold_weight: 1.0   # was 0.60 (run-2 value 0.85); manifold-certified non-IID honest rows
 
 # Population-wide straggler shock: if >= this many OTHER distinct clients already violated the upper temporal fence
 # within the last straggler_shock_window evaluations, the hard straggler guard is waived (0 = off).
@@ -174,7 +182,7 @@ warm_start_mode: "state_maturity" # "state_maturity" (Adaptive) | "fixed" (Legac
 temporal_min_samples: 200         # 200 gap observations for mature empirical Tukey fences
 behavioral_min_depth: 3           # Trajectory history depth for behavioral maturity
 warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
-alpha_downweight: 0.8   # was 0.6; Run 3 calibration for balanced non-IID class learning
+alpha_downweight: 0.8   # was 0.35 (run-2 value 0.6); 71%% of admitted updates were downweighted at mean weight 0.14 vs 0.36 for accepted
 K_drift_max: 10                   # Max consecutive downweights before threshold escalation
 delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
 delta_theta_max: 0.25             # Maximum total threshold penalty

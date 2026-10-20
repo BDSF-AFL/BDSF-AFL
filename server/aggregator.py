@@ -93,6 +93,10 @@ class AggregatorServer:
                 beta=float(config.get("subspace_beta", 0.85)),
                 kappa=float(config.get("subspace_kappa", 0.10)),
                 default_m_perp_base=float(config.get("subspace_m_perp_base", 2.0)),
+                valve_enabled=bool(config.get("subspace_valve_enabled", True)),
+                valve_window=int(config.get("subspace_valve_window", 40)),
+                valve_min=int(config.get("subspace_valve_min", 20)),
+                valve_median_floor=float(config.get("subspace_valve_median_floor", 0.5)),
             )
         else:
             self.subspace_engine = None
