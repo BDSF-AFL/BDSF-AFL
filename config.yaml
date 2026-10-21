@@ -14,9 +14,9 @@ batch_size: 32
 
 # Client training
 local_epochs: 1              # single-epoch local steps to minimize non-IID client drift
-local_lr: 0.04   # tuned from 0.05 for optimal stability/speed tradeoff
+local_lr: 0.026   # tuned from 0.04 for optimal stability/speed tradeoff
 lr_schedule: "cosine"        # dynamic learning rate: cosine annealing from 0.01 -> 0.001
-lr_min: 0.012   # tuned from 0.015; high step floor for 200-round benchmark
+lr_min: 0.008   # tuned from 0.012; high step floor for 200-round benchmark
 train_augment: false        # true: RandomCrop(32,pad=4)+HorizontalFlip on CIFAR-10 TRAIN data only (test unchanged)
 lr_schedule_unit: "round"   # "round": schedule runs over total_rounds ROUNDS (N updates each). "update": legacy (decays after total_rounds updates)
 T_base: 1.0                  # base compute time (seconds; simulated)
@@ -185,7 +185,7 @@ warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
 alpha_downweight: 0.8   # was 0.35 (run-2 value 0.6); 71%% of admitted updates were downweighted at mean weight 0.14 vs 0.36 for accepted
 K_drift_max: 10                   # Max consecutive downweights before threshold escalation
 delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
-delta_theta_max: 0.25             # Maximum total threshold penalty
+delta_theta_max: 0.05             # Maximum total threshold penalty
 delta_temp_mod: 0.50              # Moderate temporal anomaly margin fraction
 enable_quarantine: true           # Enable bounded quarantine state machine
 quarantine_horizon: 5             # Maximum rounds an update is held before expiry

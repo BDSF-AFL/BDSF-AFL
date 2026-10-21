@@ -6,10 +6,10 @@ experiment:
   rounds: 200
   batch_size: 32
   local_epochs: 1
-  lr: 0.04
-  local_lr: 0.04
+  lr: 0.026
+  local_lr: 0.026
   lr_schedule: "cosine"
-  lr_min: 0.012
+  lr_min: 0.008
   lr_schedule_unit: "round"
   train_augment: false
   fedprox_mu: 0.01
