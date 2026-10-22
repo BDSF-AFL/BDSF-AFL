@@ -14,9 +14,9 @@ batch_size: 32
 
 # Client training
 local_epochs: 1              # single-epoch local steps to minimize non-IID client drift
-local_lr: 0.026   # tuned from 0.04 for optimal stability/speed tradeoff
+local_lr: 0.028   # tuned for stability/speed balance
 lr_schedule: "cosine"        # dynamic learning rate: cosine annealing from 0.01 -> 0.001
-lr_min: 0.008   # tuned from 0.012; high step floor for 200-round benchmark
+lr_min: 0.006   # calibrated floor for 200-round benchmark
 train_augment: false        # true: RandomCrop(32,pad=4)+HorizontalFlip on CIFAR-10 TRAIN data only (test unchanged)
 lr_schedule_unit: "round"   # "round": schedule runs over total_rounds ROUNDS (N updates each). "update": legacy (decays after total_rounds updates)
 T_base: 1.0                  # base compute time (seconds; simulated)
@@ -55,6 +55,7 @@ top_k_ref: true          # always topk reference
 adaptive_clip_enabled: true  # dynamic adaptive norm clipping
 static_clip_C: 10.0      # safe ceiling for ResNet-18 on CIFAR-10
 warmup_rounds: 200       # 200 updates (10 rounds across 20 clients) for clean dossier construction
+warmup_skip_norm_guard: false   # true = P0 norm-explosion guard is skipped during warmup (S1 poison then enters warmup); default keeps it ON
 spatial_warmup_rounds: 200 # synchronized with warmup_rounds
 norm_anomaly_threshold: 1.60 # logged diagnostic threshold (not a rejection gate)
 
@@ -156,7 +157,7 @@ trs_consensus_exempt: true
 trs_consensus_margin: 0.10
 
 # Pairwise Residual Coherence (PRC) & Temporal Residual Autocorrelation (TRA)
-theta_prc: 0.20          # logged diagnostic PRC score
+theta_prc: 0.05          # was 0.20 (NOT just a diagnostic: gates consensus alignment, +0.15 suspicion per miss, and P2). Honest PRC decays 0.26 -> 0.10 as training matures, so 0.20 flagged 90%+ of honest updates late; modified attackers sit at ~0.005 (honest p10 = 0.066)
 theta_prc_hard: -0.10    # logged hard bound
 prc_buffer_k: 10         # cross-client residual buffer size for PRC computation
 theta_tra: 0.45          # logged TRA score
@@ -184,8 +185,9 @@ behavioral_min_depth: 3           # Trajectory history depth for behavioral matu
 warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
 alpha_downweight: 0.8   # was 0.35 (run-2 value 0.6); 71%% of admitted updates were downweighted at mean weight 0.14 vs 0.36 for accepted
 K_drift_max: 10                   # Max consecutive downweights before threshold escalation
+drift_anchor_min: 0.15            # anchor floor for the P4 drift bound only (was theta_anchor_min 0.25). Honest anchors sink to 0.19-0.25 late (p05 0.19) and 115 honest updates were rejected UNCOORDINATED at cdw>=10; modified attackers sit at ~0.0 (all <0.15)
 delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
-delta_theta_max: 0.05             # Maximum total threshold penalty
+delta_theta_max: 0.05             # was 0.25: honest clients sit in DOWNWEIGHT for 50+ consecutive updates (consensus cos ~0), so the penalty saturated, theta_self_eff hit 0.55 and honest sim_self (~0.5) fell below it -> UNCOORDINATED_OR_ADVERSARIAL_REJECT
 delta_temp_mod: 0.50              # Moderate temporal anomaly margin fraction
 enable_quarantine: true           # Enable bounded quarantine state machine
 quarantine_horizon: 5             # Maximum rounds an update is held before expiry

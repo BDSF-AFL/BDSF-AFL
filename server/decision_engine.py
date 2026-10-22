@@ -35,6 +35,8 @@ class JointDecisionEngine:
         self.theta_anchor_min: float = config.get("theta_anchor_min", 0.25)
         self.alpha_downweight: float = config.get("alpha_downweight", 0.35)
         self.K_drift_max: int = config.get("K_drift_max", 10)
+        # Anchor floor used ONLY by the P4 drift bound (c_dw >= K_drift_max). Defaults to theta_anchor_min (legacy behaviour).
+        self.drift_anchor_min: float = float(config.get("drift_anchor_min", self.theta_anchor_min))
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
         self.delta_theta_max: float = config.get("delta_theta_max", 0.25)
         self.delta_temp_mod: float = config.get("delta_temp_mod", 0.50)
@@ -42,6 +44,10 @@ class JointDecisionEngine:
         self.delta_borderline: float = config.get("delta_borderline", 0.05)
         self.trusted_integrity_min: float = config.get("trusted_integrity_min", 0.80)
         self.warmup_weight_factor: float = config.get("warmup_weight_factor", 0.50)
+        # Opt-in experiment switch (default OFF = unchanged behaviour): P0's norm-explosion guard runs even during
+        # warmup, so S1 sign-flip (-10x norm) is rejected from the first rounds. True lets warmup accept it (it is
+        # still L2-clipped to C_t by the spatial validator) to measure warm-up exposure.
+        self.warmup_skip_norm_guard: bool = bool(config.get("warmup_skip_norm_guard", False))
         self.static_clip_C: float = float(config.get("static_clip_C", 10.0))
         self.norm_anomaly_threshold: float = float(config.get("norm_anomaly_threshold", 1.60))
 
@@ -304,7 +310,9 @@ class JointDecisionEngine:
                 }
             )
 
-        if C_t is not None and np.isfinite(C_t) and C_t > 1e-9 and norm_r > 3.0 * C_t:
+        _in_warmup = current_round < self.warmup_rounds or not spatial_ev.spatial_mature
+        if (C_t is not None and np.isfinite(C_t) and C_t > 1e-9 and norm_r > 3.0 * C_t
+                and not (self.warmup_skip_norm_guard and _in_warmup)):
             return JointDecisionOutcome(
                 action="REJECT",
                 primary_reason="HARD_GUARD_NORM_EXPLOSION",
@@ -639,7 +647,7 @@ class JointDecisionEngine:
         )
         sim_a = behavioral_ev.sim_anchor
         is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
-        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent
+        is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent or (sim_a is not None and sim_a >= self.drift_anchor_min)
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
         is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
         is_trs_tolerable = (trs is None or trs <= self.trs_warn_thresh or is_minority_consistent or has_cert)

@@ -1,103 +1,92 @@
-# BDSF-AFL Hardened Matrix: Baseline Benchmark Experiment Manifest
+# BDSF-AFL Hardened Matrix manifest. NOTE: every key under `experiment:` OVERRIDES config.yaml (base_cfg.update(manifest)).
+# Tuning values below are kept IDENTICAL to config.yaml (generated from it); change a value in BOTH files.
 experiment:
-  name: "hardened_baseline_benchmarks"
-  dataset: "CIFAR10"
-  model_architecture: "resnet18"
+  name: hardened_baseline_benchmarks
+  dataset: CIFAR10
+  model_architecture: resnet18
   rounds: 200
   batch_size: 32
   local_epochs: 1
-  lr: 0.026
-  local_lr: 0.026
-  lr_schedule: "cosine"
-  lr_min: 0.008
-  lr_schedule_unit: "round"
-  train_augment: false
+  local_lr: 0.028
+  lr_schedule: cosine
+  lr_min: 0.006
   fedprox_mu: 0.01
   N_clients: 20
   M: 30
   K_base: 50
   K_ref: 10
   eta: 0.015
-  server_momentum: 0.90
-  theta_self: 0.30
-  theta_self_mature: 0.30
-  theta_floor: 0.40
+  server_momentum: 0.9
+  theta_self: 0.3
+  theta_self_mature: 0.3
+  theta_floor: 0.4
   theta_anchor_min: 0.25
   theta_anchor_mature: 0.25
   theta_cos: 0.15
   stochastic_jitter_max: 0.04
   adaptive_clip_enabled: true
-  gamma_clip: 1.10
-  theta_prc: 0.20
-  theta_prc_hard: -0.10
+  gamma_clip: 1.1
+  theta_prc: 0.05
+  theta_prc_hard: -0.1
   prc_buffer_k: 10
   theta_tra: 0.45
-  suspicion_decay: 0.50
+  suspicion_decay: 0.5
   suspicion_step: 0.15
   suspicion_reject_thresh: 0.65
   static_clip_C: 10.0
-  warmup_rounds: 200        # 200 updates (10 rounds across 20 clients)
-  spatial_warmup_rounds: 200 # synchronized with warmup_rounds
-  temporal_min_samples: 200  # 200 gap observations for mature empirical Tukey fences
-  norm_anomaly_threshold: 1.60
+  warmup_rounds: 200
+  spatial_warmup_rounds: 200
+  temporal_min_samples: 200
+  norm_anomaly_threshold: 1.6
   trs_reject_thresh: 0.85
-  trs_warn_thresh: 0.80
-  trs_safe_thresh: 0.70
+  trs_warn_thresh: 0.8
+  trs_safe_thresh: 0.7
   trs_min_depth: 5
   trs_consensus_exempt: true
-  trs_consensus_margin: 0.10
-  alpha_I: 0.20
+  trs_consensus_margin: 0.1
+  alpha_I: 0.2
   alpha_P: 0.15
   beta_I: 0.08
-  beta_P: 0.10
+  beta_P: 0.1
   spatial_grace_k: 3
-  temporal_grace_k: 3
   enable_quarantine: true
   quarantine_horizon: 5
   quarantine_capacity: 20
   delta_borderline: 0.05
   K_drift_max: 10
-  min_integrity_floor: 0.10
-  alpha_downweight: 0.8
+  min_integrity_floor: 0.1
   enable_subspace: true
   subspace_K: 10
-  subspace_macro_floor: 0.40
-  subspace_c_min_floor: 0.30
+  subspace_macro_floor: 0.4
+  subspace_c_min_floor: 0.3
   subspace_eps_floor: 0.05
-  subspace_alpha: 0.60
+  subspace_alpha: 0.6
   subspace_lam: 3.0
   subspace_beta: 0.85
-  subspace_kappa: 0.10
+  subspace_kappa: 0.1
   subspace_m_perp_base: 2.0
-  subspace_mu_floor: 0.10
-  subspace_energy_floor: 0.40
+  subspace_mu_floor: 0.1
+  subspace_energy_floor: 0.4
   bisection_window: 6
   bisection_variance_thresh: 0.0001
-  bisection_band_margin: 0.10
-  subspace_damp_reject_floor: 0.02
-  subspace_valve_enabled: true
-  subspace_valve_window: 40
-  subspace_valve_min: 20
-  subspace_valve_median_floor: 0.5
+  bisection_band_margin: 0.1
   pin_mass_tol: 0.0015
   pin_mass_min: 3
   pin_probation_enabled: true
   pin_probation_min_samples: 2
-  pin_mass_long_window: 60
-  pin_mass_long_tol: 0.0003
   pin_probation_weight: 0.15
   pin_suspect_nn: 0.008
   pin_suspect_min_hits: 1
   pin_strong_hits: 2
   honest_cert_enabled: true
   cert_mu_min: 0.05
-  cert_rho_min: 0.40
-  cert_prc_min: 0.10
-  cert_tra_min: 0.30
+  cert_rho_min: 0.4
+  cert_prc_min: 0.1
+  cert_tra_min: 0.3
   exempt_use_raw_sim: true
-  rep_reject_ema_rho: 0.20
-  rep_reject_ema_slash: 0.40
-  rep_reject_ema_recover_block: 0.30
+  rep_reject_ema_rho: 0.2
+  rep_reject_ema_slash: 0.4
+  rep_reject_ema_recover_block: 0.3
   staleness_exponent: 0.25
   staleness_relative: false
   staleness_ref_window: 60
@@ -105,27 +94,51 @@ experiment:
   p4_manifold_weight: 1.0
   straggler_shock_min_clients: 2
   straggler_shock_window: 40
-
+  train_augment: false
+  lr_schedule_unit: round
+  T_base: 1.0
+  lognormal_mu: 0.5
+  lognormal_sigma: 1.0
+  lam: 0.3
+  kappa: 1.5
+  use_tukey: true
+  fixed_K: false
+  top_k_ref: true
+  warmup_skip_norm_guard: false
+  subspace_damp_reject_floor: 0.02
+  subspace_valve_enabled: true
+  subspace_valve_window: 40
+  subspace_valve_min: 20
+  subspace_valve_median_floor: 0.5
+  pin_mass_long_window: 60
+  pin_mass_long_tol: 0.0003
+  staleness_floor: 0.0
+  temporal_grace_k: 3
+  borderline_margin: 0.1
+  borderline_limit: 5
+  behavioral_min_depth: 3
+  warmup_weight_factor: 0.5
+  alpha_downweight: 0.8
+  drift_anchor_min: 0.15
+  delta_theta_step: 0.05
+  delta_theta_max: 0.05
+  delta_temp_mod: 0.5
+  trusted_integrity_min: 0.8
   algorithms:
-    - "Proposed_BDSF_AFL"
-
+  - Proposed_BDSF_AFL
   heterogeneity:
-    - alpha: 0.5
-      label: "Moderate_NonIID"
-
+  - alpha: 0.5
+    label: Moderate_NonIID
   attacks:
-    - "S2_MIMICRY"
-
+  - S2_MIMICRY
   byzantine_fractions:
-    - 0.2
-
+  - 0.2
   seeds:
-    - 42
-
+  - 42
   target_accuracy: 0.75
   early_stopping: true
   min_early_stop_round: 100
   early_stopping_patience: 5
-  log_dir: "logs/hardened_matrix/benchmarks/"
-  checkpoint_dir: "logs/hardened_matrix/checkpoints/"
-  summary_path: "logs/hardened_matrix/summaries/benchmark_summary.csv"
+  log_dir: logs/hardened_matrix/benchmarks/
+  checkpoint_dir: logs/hardened_matrix/checkpoints/
+  summary_path: logs/hardened_matrix/summaries/benchmark_summary.csv
