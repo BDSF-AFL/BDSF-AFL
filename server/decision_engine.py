@@ -37,6 +37,10 @@ class JointDecisionEngine:
         self.K_drift_max: int = config.get("K_drift_max", 10)
         # Anchor floor used ONLY by the P4 drift bound (c_dw >= K_drift_max). Defaults to theta_anchor_min (legacy behaviour).
         self.drift_anchor_min: float = float(config.get("drift_anchor_min", self.theta_anchor_min))
+        # Anchor floor for the anchor-minority exemption of the P1a inversion guard and the P4 spatial range. Late in training the
+        # subspace-filtered consensus cosine of genuine non-IID clients goes strongly negative (raw cosine stays ~-0.1) while their
+        # own-anchor alignment is 0.07-0.25; sign-flip/noise attackers sit at <=0.05. Defaults to theta_anchor_min (legacy).
+        self.inversion_anchor_min: float = float(config.get("inversion_anchor_min", self.theta_anchor_min))
         self.delta_theta_step: float = config.get("delta_theta_step", 0.05)
         self.delta_theta_max: float = config.get("delta_theta_max", 0.25)
         self.delta_temp_mod: float = config.get("delta_temp_mod", 0.50)
@@ -416,7 +420,7 @@ class JointDecisionEngine:
         if sim_g is not None and sim_g < -self.theta_floor:
             sim_a = behavioral_ev.sim_anchor
             is_anchor_minority = (behavioral_ev.behavioral_mature and sim_a is not None and sim_s is not None and 
-                                  sim_a >= self.theta_anchor_min and sim_s >= self.theta_self)
+                                  sim_a >= self.inversion_anchor_min and sim_s >= self.theta_self)
             if not is_anchor_minority:
                 return JointDecisionOutcome(
                     action="REJECT",
@@ -649,7 +653,8 @@ class JointDecisionEngine:
         is_minority_consistent = (sim_a is not None and sim_a >= self.theta_anchor_min)
         is_drift_bounded = (c_dw < self.K_drift_max) or is_minority_consistent or (sim_a is not None and sim_a >= self.drift_anchor_min)
         is_temporal_tolerable = (not temporal_ev.temporal_mature or g_margin <= self.delta_temp_mod)
-        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent))
+        is_inversion_anchor_ok = bool(behavioral_ev.behavioral_mature and sim_a is not None and sim_a >= self.inversion_anchor_min)
+        is_spatial_range = (sim_g is not None and (sim_g >= -self.theta_floor or is_minority_consistent or is_inversion_anchor_ok))
         is_trs_tolerable = (trs is None or trs <= self.trs_warn_thresh or is_minority_consistent or has_cert)
 
         if (behavioral_ev.behavioral_mature and is_spatial_range and

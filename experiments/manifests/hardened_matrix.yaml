@@ -119,7 +119,7 @@ experiment:
   behavioral_min_depth: 3
   warmup_weight_factor: 0.5
   alpha_downweight: 0.8
-  drift_anchor_min: 0.15
+  drift_anchor_min: 0.1
   delta_theta_step: 0.05
   delta_theta_max: 0.05
   delta_temp_mod: 0.5
@@ -142,3 +142,4 @@ experiment:
   log_dir: logs/hardened_matrix/benchmarks/
   checkpoint_dir: logs/hardened_matrix/checkpoints/
   summary_path: logs/hardened_matrix/summaries/benchmark_summary.csv
+  inversion_anchor_min: 0.1

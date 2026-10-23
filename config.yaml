@@ -185,7 +185,8 @@ behavioral_min_depth: 3           # Trajectory history depth for behavioral matu
 warmup_weight_factor: 0.5         # Weight attenuation for warmup contributions
 alpha_downweight: 0.8   # was 0.35 (run-2 value 0.6); 71%% of admitted updates were downweighted at mean weight 0.14 vs 0.36 for accepted
 K_drift_max: 10                   # Max consecutive downweights before threshold escalation
-drift_anchor_min: 0.15            # anchor floor for the P4 drift bound only (was theta_anchor_min 0.25). Honest anchors sink to 0.19-0.25 late (p05 0.19) and 115 honest updates were rejected UNCOORDINATED at cdw>=10; modified attackers sit at ~0.0 (all <0.15)
+drift_anchor_min: 0.10            # anchor floor for the P4 drift bound only (was theta_anchor_min 0.25; 0.15 in run 5). Honest anchors sink to 0.07-0.25 late; COMPOUND attackers sit at ~0.0
+inversion_anchor_min: 0.10        # anchor floor for the P1a global-inversion exemption + P4 range (was theta_anchor_min 0.25). NONE run: late filtered sim_g of honest non-IID clients goes to -0.65 (raw -0.1) -> 170 honest INVERSION rejects -> reputation spiral; honest anchor median 0.17, attackers <=0.05. Norm-explosion guard is unaffected
 delta_theta_step: 0.05            # Self-threshold penalty step per consecutive downweight
 delta_theta_max: 0.05             # was 0.25: honest clients sit in DOWNWEIGHT for 50+ consecutive updates (consensus cos ~0), so the penalty saturated, theta_self_eff hit 0.55 and honest sim_self (~0.5) fell below it -> UNCOORDINATED_OR_ADVERSARIAL_REJECT
 delta_temp_mod: 0.50              # Moderate temporal anomaly margin fraction
