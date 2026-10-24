@@ -17,7 +17,7 @@ local_epochs: 1              # single-epoch local steps to minimize non-IID clie
 local_lr: 0.028   # tuned for stability/speed balance
 lr_schedule: "cosine"        # dynamic learning rate: cosine annealing from 0.01 -> 0.001
 lr_min: 0.006   # calibrated floor for 200-round benchmark
-train_augment: false        # true: RandomCrop(32,pad=4)+HorizontalFlip on CIFAR-10 TRAIN data only (test unchanged)
+train_augment: true        # true: RandomCrop(32,pad=4)+HorizontalFlip on CIFAR-10 TRAIN data only (test unchanged)
 lr_schedule_unit: "round"   # "round": schedule runs over total_rounds ROUNDS (N updates each). "update": legacy (decays after total_rounds updates)
 T_base: 1.0                  # base compute time (seconds; simulated)
 lognormal_mu: 0.5

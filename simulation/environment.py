@@ -1,4 +1,5 @@
 import os
+import shutil
 import asyncio
 import time
 import copy
@@ -449,10 +450,15 @@ class SimulationEnvironment:
                     save_checkpoint(latest_ckpt_path)
                     if is_new_best:
                         best_ckpt_path = os.path.join(ckpt_dir, f"{run_id}_best.pt")
+                        # NOTE: this used to be `except Exception: pass` with `shutil` never imported, so the NameError was
+                        # swallowed and *_best.pt was never written. Failures are now reported, with a direct-save fallback.
                         try:
                             shutil.copyfile(latest_ckpt_path, best_ckpt_path)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"[WARNING] copy to best checkpoint failed ({e!r}); saving best checkpoint directly.", flush=True)
+                            save_checkpoint(best_ckpt_path)
+                        if self.config.get("save_checkpoints", True) and not os.path.exists(best_ckpt_path):
+                            print(f"[WARNING] best checkpoint was NOT written to {best_ckpt_path}", flush=True)
 
                     elapsed = time.time() - loop_start
                     print(

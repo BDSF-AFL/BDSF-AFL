@@ -94,7 +94,7 @@ experiment:
   p4_manifold_weight: 1.0
   straggler_shock_min_clients: 2
   straggler_shock_window: 40
-  train_augment: false
+  train_augment: true
   lr_schedule_unit: round
   T_base: 1.0
   lognormal_mu: 0.5
